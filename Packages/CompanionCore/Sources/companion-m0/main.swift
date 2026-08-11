@@ -211,6 +211,17 @@ func runTask(prompt: String) {
     let url = URL(string: GatewayLifecycle.wsURL(token: token))!
     var sessionID: String?
     var completed = false
+    var toolCount = 0
+    // Capture frame mentah ke file buat fixture (T0.7/T0.8).
+    let frameFile = "/tmp/companion-m0-frames.jsonl"
+    var frameHandle: FileHandle?
+    if let f = FileHandle(forWritingAtPath: frameFile) {
+        f.seekToEndOfFile()
+        frameHandle = f
+    } else {
+        FileManager.default.createFile(atPath: frameFile, contents: nil)
+        frameHandle = FileHandle(forWritingAtPath: frameFile)
+    }
     let client = JSONRPCClient(url: url) { env in
         guard let type = env.params?.type else { return }
         // Abaikan event non-session (gateway.ready) dan event session lain.
@@ -236,7 +247,12 @@ func runTask(prompt: String) {
             done.signal()
         case "tool.start":
             if let p = env.params?.payload, case .object(let o) = p, case .string(let name)? = o["name"] {
+                toolCount += 1
                 print("  🔧 \(name)")
+            }
+        case "tool.complete":
+            if let p = env.params?.payload, case .object(let o) = p, case .string(let name)? = o["name"] {
+                print("  ✓ tool selesai: \(name)")
             }
         case "error":
             if let p = env.params?.payload, case .object(let o) = p, case .string(let t)? = o["message"] {
@@ -248,6 +264,11 @@ func runTask(prompt: String) {
         }
     }
     client.connect()
+    client.onRawFrame = { raw in
+        if let h = frameHandle, let d = (raw + "\n").data(using: .utf8) {
+            h.write(d)
+        }
+    }
 
     // 3. Round trip.
     let adapter = HermesAdapter(client: client)
@@ -265,8 +286,11 @@ func runTask(prompt: String) {
 
     _ = done.wait(timeout: .now() + 120)
     client.close()
+    frameHandle?.closeFile()
     cleanupSpawned(spawned)
-    print(completed ? "[done]" : "[timeout — task belum selesai 120s]")
+    print(completed
+        ? "[done · tools: \(toolCount)]"
+        : "[timeout — task belum selesai 120s · tools: \(toolCount)]")
 }
 
 /// Box hasil async → sync (mode CLI; @unchecked aman karena dipakai satu-shot).

@@ -1,0 +1,1 @@
+{"jsonrpc": "2.0", "method": "event", "params": {"type": "approval.request", "session_id": "bb1f0c77", "payload": {"command": "rm /tmp/hello-companion.txt && ls /tmp/hello-companion.txt 2>&1; echo \"exit: $?\"", "pattern_key": "delete in root path", "pattern_keys": ["delete in root path"], "description": "delete in root path", "allow_permanent": true}}}

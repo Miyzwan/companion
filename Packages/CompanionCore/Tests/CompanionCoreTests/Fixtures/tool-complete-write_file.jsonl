@@ -1,0 +1,1 @@
+{"jsonrpc": "2.0", "method": "event", "params": {"type": "tool.complete", "session_id": "bb1f0c77", "payload": {"tool_id": "call_00_ehb3bBhFotHuKqDHM96l0380", "name": "write_file", "args": {"path": "/tmp/hello-companion.txt", "content": "hello\n"}, "duration_s": 0.07622814178466797, "result": {"byte_count": 6, "line_count": 1}}}}

@@ -31,6 +31,8 @@ public final class JSONRPCClient: @unchecked Sendable {
     private var idGen = JSONRPCIDGenerator()
     private var pending: [Int: CheckedContinuation<JSONRPCResponse, Error>] = [:]
     private var onEvent: ((JSONRPCEnvelope) -> Void)?
+    /// Debug/capture: raw frame mentah sebelum diklasifikasi.
+    public var onRawFrame: ((String) -> Void)?
     private var recvTask: Task<Void, Never>?
 
     public init(url: URL, onEvent: ((JSONRPCEnvelope) -> Void)? = nil) {
@@ -74,9 +76,10 @@ public final class JSONRPCClient: @unchecked Sendable {
                 let message = try await task.receive()
                 switch message {
                 case .string(let s):
+                    onRawFrame?(s)
                     handleFrame(s)
                 case .data(let d):
-                    if let s = String(data: d, encoding: .utf8) { handleFrame(s) }
+                    if let s = String(data: d, encoding: .utf8) { onRawFrame?(s); handleFrame(s) }
                 @unknown default:
                     break
                 }

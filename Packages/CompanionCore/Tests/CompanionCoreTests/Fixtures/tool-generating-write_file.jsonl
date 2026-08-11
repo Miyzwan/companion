@@ -1,0 +1,1 @@
+{"jsonrpc": "2.0", "method": "event", "params": {"type": "tool.generating", "session_id": "bb1f0c77", "payload": {"name": "write_file"}}}
