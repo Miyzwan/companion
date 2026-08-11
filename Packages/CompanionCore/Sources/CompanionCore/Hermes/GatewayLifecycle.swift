@@ -97,4 +97,36 @@ public struct GatewayLifecycle {
         Thread.sleep(forTimeInterval: 0.05)
         return !processAlive(pid)
     }
+
+    /// Attach-first, spawn-second (D2) — satu sumber kebenaran untuk CLI & app.
+    /// Return nil = gagal total (spawn/ready timeout). (nil, nil) = server UP
+    /// tapi token tidak diketahui (bukan spawn kita). (nil, token) = attach.
+    /// (pid, token) = spawned + ready (pid wajib di-stop pemanggil saat selesai).
+    public static func attachOrSpawn(logURL: URL, pidURL: URL, tokenURL: URL) -> (pid: Int32?, token: String?)? {
+        if probe(host: defaultHost, port: defaultPort, timeout: 1) {
+            guard let t = readToken(from: tokenURL) else { return (nil, nil) }
+            return (nil, t)
+        }
+        let token = UUID().uuidString
+        do {
+            let p = try spawnServer(arguments: spawnArguments(), logURL: logURL, sessionToken: token)
+            let pid = p.processIdentifier
+            try String(pid).write(to: pidURL, atomically: true, encoding: .utf8)
+            try token.write(to: tokenURL, atomically: true, encoding: .utf8)
+            let ready = waitUntilReady(
+                timeout: 30, interval: 0.5,
+                probe: { probe(host: defaultHost, port: defaultPort, timeout: 0.5) },
+                isProcessAlive: { processAlive(pid) })
+            guard ready else { return nil }
+            return (pid, token)
+        } catch {
+            return nil
+        }
+    }
+
+    private static func readToken(from url: URL) -> String? {
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
 }

@@ -36,40 +36,21 @@ private final class ProofState: @unchecked Sendable {
 }
 
 /// Attach kalau server milik kita UP, spawn kalau belum (D2).
+/// Delegate ke GatewayLifecycle.attachOrSpawn (satu sumber kebenaran, T3.3).
 /// Return (pid spawned?, token) — pid nil kalau attach ke server milik kita.
 func attachOrSpawn() -> (Int32?, String)? {
-    let up = GatewayLifecycle.probe(host: GatewayLifecycle.defaultHost,
-                                    port: GatewayLifecycle.defaultPort, timeout: 1)
-    if up {
-        guard let t = readToken() else {
-            print("server UP tapi token tidak diketahui (bukan spawn kita) — serve-stop dulu kalau milik kita (D2)")
-            return nil
-        }
-        return (nil, t)
-    }
-    let token = UUID().uuidString
-    do {
-        let p = try GatewayLifecycle.spawnServer(
-            arguments: GatewayLifecycle.spawnArguments(),
-            logURL: URL(fileURLWithPath: logFile),
-            sessionToken: token)
-        let pid = p.processIdentifier
-        try String(pid).write(toFile: pidFile, atomically: true, encoding: .utf8)
-        try token.write(toFile: tokenFile, atomically: true, encoding: .utf8)
-        let ready = GatewayLifecycle.waitUntilReady(
-            timeout: 30, interval: 0.5,
-            probe: { GatewayLifecycle.probe(host: GatewayLifecycle.defaultHost,
-                                            port: GatewayLifecycle.defaultPort, timeout: 0.5) },
-            isProcessAlive: { GatewayLifecycle.processAlive(pid) })
-        guard ready else {
-            print("server tidak ready 30s — cek \(logFile)")
-            return nil
-        }
-        return (pid, token)
-    } catch {
-        print("spawn gagal: \(error)")
+    guard let r = GatewayLifecycle.attachOrSpawn(
+        logURL: URL(fileURLWithPath: logFile),
+        pidURL: URL(fileURLWithPath: pidFile),
+        tokenURL: URL(fileURLWithPath: tokenFile)) else {
+        print("spawn/ready gagal — cek \(logFile)")
         return nil
     }
+    if r.pid == nil && r.token == nil {
+        print("server UP tapi token tidak diketahui (bukan spawn kita) — serve-stop dulu kalau milik kita (D2)")
+        return nil
+    }
+    return (r.pid, r.token!)   // aman: kasus (nil, nil) sudah di-handle di atas
 }
 
 func runProof(kind: ProofKind, prompt: String) {

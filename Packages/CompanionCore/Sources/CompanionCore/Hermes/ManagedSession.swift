@@ -1,0 +1,148 @@
+import Foundation
+
+// T3.2 — ManagedSession: loop tunggal yang menyambungkan event Hermes →
+// TaskStateMachine → UI (dipakai app + bisa dipakai CLI). Ekstraksi dari
+// ProofRunner (M1). Tanggung jawab:
+//   * drain event dari client (setEventHandler → AsyncStream)
+//   * update TaskStateMachine + ApprovalGate
+//   * surface state & NeedsYou ke UI via callback
+//   * auto-respond approval/clarify opsional (UI penuh = M4)
+// Thread: loop jalan pada executor pemanggil run(); callback dipanggil dari sana
+// (app membungkusnya ke main/actor sesuai kebutuhan).
+
+public final class ManagedSession: @unchecked Sendable {
+    /// State berubah (UI update karakter/bubble).
+    public var onStateChange: (@Sendable (TaskState) -> Void)?
+    /// Satu keputusan dibutuhkan (approvalRequest / clarifyRequest — lihat decisionText).
+    public var onNeedsYouRequest: (@Sendable (TaskEvent) -> Void)?
+    /// Text aktivitas (status.update) — "apa yang Hermes kerjakan" (PRD: Know what Hermes is doing).
+    public var onActivity: (@Sendable (String) -> Void)?
+    /// Loop berakhir (terminal state).
+    public var onFinished: (@Sendable (TaskState) -> Void)?
+
+    /// Kalau tidak nil → ManagedSession menjawab otomatis (spike/demo).
+    /// nil → UI yang memutuskan via respondHelpers.
+    public var autoRespondApproval: ApprovalChoice?
+    /// Jawaban clarify otomatis kalau `autoRespondApproval` diset (default: pilihan pertama).
+    public var autoClarifyUseFirstChoice = true
+
+    public private(set) var state: TaskState = .idle
+
+    private let adapter: HermesAdapter
+    private let stream: AsyncStream<TaskEvent>
+    private let continuation: AsyncStream<TaskEvent>.Continuation
+    private var machine = TaskStateMachine(initial: .idle)
+    private var gate = ApprovalGate()
+    private var awaitingResume = false
+
+    public init(adapter: HermesAdapter) {
+        self.adapter = adapter
+        let (s, c) = AsyncStream<TaskEvent>.makeStream()
+        stream = s
+        continuation = c
+        adapter.client.setEventHandler { [continuation] env in
+            if let ev = EventDecoder.decode(env) {
+                continuation.yield(ev)
+            }
+        }
+    }
+
+    /// Jalankan satu managed task. Return state akhir.
+    public func run(sessionID: String, prompt: String) async -> TaskState {
+        machine = TaskStateMachine(initial: .idle)
+        gate = ApprovalGate()
+        awaitingResume = false
+        do {
+            try await adapter.submitPrompt(sessionID: sessionID, text: prompt)
+            transition(.starting)
+        } catch {
+            transition(.error)
+            finish()
+            return state
+        }
+
+        for await ev in stream {
+            await handle(ev, sessionID: sessionID)
+            if case .success = machine.state { break }
+            if case .error = machine.state { break }
+        }
+        continuation.finish()
+        finish()
+        return state
+    }
+
+    // ── Respond — UI (M4) atau auto. Gate memastikan exactly-once (PRD 51). ──
+
+    /// Kirim keputusan approval. Return true kalau diterima gate (dikirim ke network).
+    public func respondApproval(sessionID: String, choice: ApprovalChoice) async -> Bool {
+        guard gate.respond(choice) else { return false }
+        do {
+            _ = try await adapter.respondApproval(sessionID: sessionID, choice: choice)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Kirim jawaban clarify. Return true kalau diterima server (bukan 4009).
+    public func respondClarify(sessionID: String, requestID: String, answer: String) async -> Bool {
+        (try? await adapter.respondClarify(sessionID: sessionID, requestID: requestID, answer: answer)) ?? false
+    }
+
+    // ── Loop internal (mirror ProofRunner M1) ──
+
+    private func handle(_ ev: TaskEvent, sessionID: String) async {
+        switch ev {
+        case .ready, .activity, .messageDelta, .toolStarted, .toolCompleted:
+            if machine.state == .starting { transition(.working) }
+            if awaitingResume { transition(.working); awaitingResume = false }   // PRD 50: bukti lanjut
+            if case .activity(let text) = ev { onActivity?(text) }
+
+        case .approvalRequest(let req):
+            transition(.needsYou(.approval))
+            gate.register(req)
+            onNeedsYouRequest?(ev)
+            if let choice = autoRespondApproval {
+                let sent = await respondApproval(sessionID: sessionID, choice: choice)
+                if sent { awaitingResume = true }
+            }
+
+        case .clarifyRequest(let req):
+            transition(.needsYou(.clarification))
+            onNeedsYouRequest?(ev)
+            if autoRespondApproval != nil {
+                let answer = autoClarifyUseFirstChoice ? (req.choices.first ?? "Lanjutkan") : "Lanjutkan"
+                let sent = await respondClarify(sessionID: sessionID, requestID: req.requestId, answer: answer)
+                if sent { awaitingResume = true }
+            }
+
+        case .messageComplete:
+            if case .needsYou = machine.state {
+                onNeedsYouRequest?(ev)   // biar UI tahu anomali; tidak crash
+            }
+            transition(.success)
+            gate.invalidate()            // PRD 52: approval lama non-interaktif
+
+        case .failure(let msg):
+            _ = msg
+            transition(.error)
+
+        default:
+            break
+        }
+    }
+
+    private func transition(_ next: TaskState) {
+        guard machine.state != next else { return }
+        if machine.transition(to: next) {
+            state = machine.state
+            onStateChange?(state)
+        } else {
+            onStateChange?(machine.state)
+        }
+    }
+
+    private func finish() {
+        onFinished?(state)
+    }
+}
