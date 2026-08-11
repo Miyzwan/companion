@@ -52,6 +52,11 @@ public final class JSONRPCClient: @unchecked Sendable {
         task.cancel(with: .goingAway, reason: nil)
     }
 
+    /// Ganti/atur handler event dinamis (dipakai wiring app → ManagedSession).
+    public func setEventHandler(_ handler: ((JSONRPCEnvelope) -> Void)?) {
+        onEvent = handler
+    }
+
     /// Kirim request, tunggu response dengan id yang sama.
     public func send<Params: Encodable>(method: String, params: Params) async throws -> JSONRPCResponse {
         let id = queue.sync { idGen.nextID() }
