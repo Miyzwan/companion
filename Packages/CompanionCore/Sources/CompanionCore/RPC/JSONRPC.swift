@@ -83,3 +83,13 @@ public struct JSONRPCIDGenerator {
         return next
     }
 }
+
+// Convenience accessor JSONValue — dipakai decoder/domain (T1.2).
+public extension JSONValue {
+    var string: String? { if case .string(let s) = self { return s }; return nil }
+    var bool: Bool? { if case .bool(let b) = self { return b }; return nil }
+    var number: Double? { if case .number(let n) = self { return n }; return nil }
+    var array: [JSONValue]? { if case .array(let a) = self { return a }; return nil }
+    var object: [String: JSONValue]? { if case .object(let o) = self { return o }; return nil }
+    subscript(key: String) -> JSONValue? { object?[key] }
+}
