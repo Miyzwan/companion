@@ -35,7 +35,17 @@ import Foundation
     #expect(resp.result == nil)
 }
 
-@Test func eventEnvelopeDecoding() throws {
+@Test func gatewayReadyEventDecodesWithoutSessionID() throws {
+    // Frame NYATA hasil spike T0.5 (payload skin dibikin minimal — buktikan decode sukses tanpa session_id).
+    let json = #"{"jsonrpc":"2.0","method":"event","params":{"type":"gateway.ready","payload":{"skin":{}}}}"#
+    let env = try JSONDecoder().decode(JSONRPCEnvelope.self, from: Data(json.utf8))
+    #expect(env.method == "event")
+    #expect(env.params?.type == "gateway.ready")
+    #expect(env.params?.session_id == nil)
+}
+
+@Test func eventWithSessionIDDecoding() throws {
+    // Event session-scoped (status.update) membawa session_id.
     let json = #"{"jsonrpc":"2.0","method":"event","params":{"type":"status.update","session_id":"ab12cd34","payload":{"kind":"status","text":"Reading files"}}}"#
     let env = try JSONDecoder().decode(JSONRPCEnvelope.self, from: Data(json.utf8))
     #expect(env.method == "event")
@@ -43,3 +53,4 @@ import Foundation
     #expect(env.params?.session_id == "ab12cd34")
     #expect(env.params?.payload == .object(["kind": .string("status"), "text": .string("Reading files")]))
 }
+

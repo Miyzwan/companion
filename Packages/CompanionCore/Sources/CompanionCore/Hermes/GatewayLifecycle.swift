@@ -6,9 +6,10 @@ public struct GatewayLifecycle {
     public static let defaultHost = "127.0.0.1"
     public static let defaultPort = 9119
 
-    /// URL WebSocket ke gateway (D1).
-    public static func wsURL(host: String = defaultHost, port: Int = defaultPort) -> String {
-        "ws://\(host):\(port)/api/ws"
+    /// URL WebSocket ke gateway (D1), dengan auth token (diverifikasi T0.5:
+    /// loopback butuh `?token=<_SESSION_TOKEN>`, constant-time dibanding di `_ws_auth_reason`).
+    public static func wsURL(host: String = defaultHost, port: Int = defaultPort, token: String) -> String {
+        "ws://\(host):\(port)/api/ws?token=\(token)"
     }
 
     /// Argumen spawn `hermes serve` (D3): skip web build, bind lokal.
@@ -16,9 +17,10 @@ public struct GatewayLifecycle {
         ["serve", "--skip-build", "--host", host, "--port", String(port)]
     }
 
-    /// Spawn `hermes serve` sebagai child process; stdout/stderr ke log file.
+    /// Spawn `hermes serve` sebagai child process; stdout/stderr ke log file,
+    /// dan inject `HERMES_DASHBOARD_SESSION_TOKEN` (token inilah yang dipakai WS auth).
     /// Integration — hanya dipanggil setelah probe gagal (attach-first).
-    public static func spawnServer(arguments: [String], logURL: URL) throws -> Process {
+    public static func spawnServer(arguments: [String], logURL: URL, sessionToken: String) throws -> Process {
         if !FileManager.default.fileExists(atPath: logURL.path) {
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
         }
@@ -26,6 +28,10 @@ public struct GatewayLifecycle {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["hermes"] + arguments
+        // MERGE env, jangan replace — child butuh PATH/HOME dsb; kita cuma nambah token.
+        var env = ProcessInfo.processInfo.environment
+        env["HERMES_DASHBOARD_SESSION_TOKEN"] = sessionToken
+        process.environment = env
         process.standardOutput = handle
         process.standardError = handle
         try process.run()

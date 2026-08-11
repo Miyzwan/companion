@@ -69,7 +69,8 @@ public struct JSONRPCEnvelope: Decodable {
 
 public struct EventParams: Decodable {
     public let type: String
-    public let session_id: String
+    /// OPTIONAL — frame `gateway.ready` TIDAK membawa session_id (diverifikasi spike T0.5).
+    public let session_id: String?
     public let payload: JSONValue?
 }
 

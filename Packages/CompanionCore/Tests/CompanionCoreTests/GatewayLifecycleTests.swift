@@ -7,8 +7,8 @@ import Foundation
 }
 
 @Test func wsURLFormat() {
-    #expect(GatewayLifecycle.wsURL() == "ws://127.0.0.1:9119/api/ws")
-    #expect(GatewayLifecycle.wsURL(host: "localhost", port: 9999) == "ws://localhost:9999/api/ws")
+    #expect(GatewayLifecycle.wsURL(token: "abc") == "ws://127.0.0.1:9119/api/ws?token=abc")
+    #expect(GatewayLifecycle.wsURL(host: "localhost", port: 9999, token: "xyz") == "ws://localhost:9999/api/ws?token=xyz")
 }
 
 @Test func waitUntilReadyReturnsWhenProbeSucceeds() {
