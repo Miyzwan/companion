@@ -26,20 +26,23 @@ final class PassThroughContainer: NSView {
 
 /// Bubble status: display-only, selalu pass-through (PRD: bubble tidak boleh
 /// jadi mini-terminal; interaksi spike = muncul/hilang lewat klik karakter).
-/// Panel menskalakan ukuran bubble mengikuti lebar teks (background tidak
-/// pernah lebih sempit dari tulisan).
+/// Mendukung multi-baris (state + aktivitas/keputusan, M3); panel menskalakan
+/// ukuran mengikuti teks terlebar (background tidak pernah lebih sempit).
 final class BubbleView: NSView {
     private let font = NSFont.systemFont(ofSize: 12)
-    var text = "● Idle — Ready when you are." {
+    var text = "◉ Ready when you are." {
         didSet { needsDisplay = true }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// Ukuran bubble yang pas untuk `text` (teks + padding).
+    /// Ukuran bubble yang pas untuk `text` (baris terlebar + padding).
     func requiredSize(for text: String) -> NSSize {
-        let s = (text as NSString).size(withAttributes: [.font: font])
-        return NSSize(width: s.width + 28, height: s.height + 24)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        let lines = text.components(separatedBy: "\n")
+        let lineH = ((lines.first ?? "") as NSString).size(withAttributes: attrs).height
+        let maxW = lines.map { ($0 as NSString).size(withAttributes: attrs).width }.max() ?? 0
+        return NSSize(width: maxW + 28, height: CGFloat(lines.count) * lineH + 24)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -49,14 +52,18 @@ final class BubbleView: NSView {
         NSColor(calibratedWhite: 0.75, alpha: 1).setStroke()
         path.lineWidth = 1
         path.stroke()
-        let s = text as NSString
+        let lines = text.components(separatedBy: "\n")
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor(calibratedWhite: 0.15, alpha: 1),
         ]
-        let size = s.size(withAttributes: attrs)
-        s.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
-               withAttributes: attrs)
+        let lineH = ((lines.first ?? "") as NSString).size(withAttributes: attrs).height
+        for (i, line) in lines.enumerated() {
+            let s = line as NSString
+            let size = s.size(withAttributes: attrs)
+            let y = bounds.midY + (CGFloat(lines.count - 1) / 2 - CGFloat(i)) * lineH - size.height / 2
+            s.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: y), withAttributes: attrs)
+        }
     }
 }
 
@@ -168,6 +175,7 @@ final class FloatingPanelController: NSObject {
     private var characterView: CharacterView!
     private var bubbleView: BubbleView!
     private var bubbleVisible = false
+    private var bubbleAutoShown = false
 
     func show() {
         // Accessory: tanpa Dock icon, app tidak pernah "aktif" → tidak mencuri fokus.
@@ -217,26 +225,50 @@ final class FloatingPanelController: NSObject {
 
     // ── Bubble ──────────────────────────────────────────────────────
 
-    private func toggleBubble() {
-        bubbleVisible.toggle()
-        if bubbleVisible {
-            let text = "● Idle — Ready when you are."
-            bubbleView.text = text
-            let need = bubbleView.requiredSize(for: text)
-            // Panel selebar bubble (+margin), bottom-left anchor tetap →
-            // bubble mengembang ke ATAS, di atas karakter.
-            let panelW = max(panelWidth, need.width + 2 * edge)
-            bubbleView.frame = NSRect(x: (panelW - need.width) / 2, y: edge + characterSize + gap,
-                                      width: need.width, height: need.height)
+    private func toggleBubble() { setBubbleVisible(!bubbleVisible) }
+
+    private func setBubbleVisible(_ visible: Bool) {
+        bubbleVisible = visible
+        if visible {
             bubbleView.isHidden = false
-            let panelH = edge + characterSize + gap + need.height + edge
-            panel.setFrame(NSRect(origin: panel.frame.origin,
-                                  size: NSSize(width: panelW, height: panelH)), display: true)
+            resizePanelForBubble()
         } else {
             bubbleView.isHidden = true
             panel.setFrame(NSRect(origin: panel.frame.origin, size: collapsedSize), display: true)
         }
         clampPanelIntoVisibleFrame()
+    }
+
+    /// Ukur ulang panel agar bubble (teks terbaru) muat — bottom-left anchor tetap,
+    /// bubble mengembang ke ATAS di atas karakter.
+    private func resizePanelForBubble() {
+        let need = bubbleView.requiredSize(for: bubbleView.text)
+        let panelW = max(panelWidth, need.width + 2 * edge)
+        bubbleView.frame = NSRect(x: (panelW - need.width) / 2, y: edge + characterSize + gap,
+                                  width: need.width, height: need.height)
+        let panelH = edge + characterSize + gap + need.height + edge
+        panel.setFrame(NSRect(origin: panel.frame.origin,
+                              size: NSSize(width: panelW, height: panelH)), display: true)
+    }
+
+    // ── Bind ke TaskController (M3) ─────────────────────────────────
+
+    func bind(_ controller: TaskController) {
+        controller.onBubbleChange = { [weak self] text in
+            Task { @MainActor in self?.setBubbleText(text) }
+        }
+    }
+
+    /// Update teks bubble dari state Hermes. Auto-buka bubble SEKALI saat
+    /// state meninggalkan idle (spike M3) — setelah itu user yang kontrol.
+    private func setBubbleText(_ text: String) {
+        let idleDefault = "◉ Ready when you are."
+        if bubbleView.isHidden && text != idleDefault && !bubbleAutoShown {
+            bubbleAutoShown = true
+            setBubbleVisible(true)
+        }
+        bubbleView.text = text
+        if bubbleVisible { resizePanelForBubble() }
     }
 
     // ── Drag ────────────────────────────────────────────────────────
