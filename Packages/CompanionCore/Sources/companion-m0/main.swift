@@ -331,6 +331,18 @@ case "ws-spike":
 case "run":
     let prompt = args.count >= 3 ? args.dropFirst(2).joined(separator: " ") : "Balas dengan satu kata: ok"
     runTask(prompt: prompt)
+case "run-approval":
+    // T1.5 — prompt yang memicu approval.request (rm /tmp → "delete in root path").
+    let prompt = args.count >= 3
+        ? args.dropFirst(2).joined(separator: " ")
+        : "Buat file hello-companion-m1.txt di folder /tmp berisi \"hello m1\", lalu hapus file itu"
+    runProof(kind: .approval, prompt: prompt)
+case "run-clarify":
+    // T1.6 — prompt yang memicu clarify.request TEPAT SATU kali.
+    let prompt = args.count >= 3
+        ? args.dropFirst(2).joined(separator: " ")
+        : "Kamu mau bantu aku nyimpan sebuah file kerja. Tanya aku TEPAT SATU kali lewat tool clarify, 2 pilihan: simpan sebagai .txt atau simpan sebagai .md. Setelah aku jawab, langsung lanjut: buat file /tmp/hasil-clarify.txt berisi \"sip\". Jangan nanya pertanyaan lain lagi, dan jangan pakai rm."
+    runProof(kind: .clarify, prompt: prompt)
 default:
-    print("usage: companion-m0 [doctor | serve-status | serve-spawn | serve-stop | ws-spike | run \"<prompt>\"]")
+    print("usage: companion-m0 [doctor | serve-status | serve-spawn | serve-stop | ws-spike | run \"<prompt>\" | run-approval \"<prompt>\" | run-clarify \"<prompt>\"]")
 }
