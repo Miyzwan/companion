@@ -25,6 +25,9 @@ public final class ManagedSession: @unchecked Sendable {
     public var autoRespondApproval: ApprovalChoice?
     /// Jawaban clarify otomatis kalau `autoRespondApproval` diset (default: pilihan pertama).
     public var autoClarifyUseFirstChoice = true
+    /// Tunda sebelum auto-respond (detik) — biar request approval/klarifikasi
+    /// sempat TERBACA di UI sebelum dijawab (demo/observasi). 0 = langsung.
+    public var autoApproveDelay: TimeInterval = 0
 
     public private(set) var state: TaskState = .idle
 
@@ -103,6 +106,9 @@ public final class ManagedSession: @unchecked Sendable {
             gate.register(req)
             onNeedsYouRequest?(ev)
             if let choice = autoRespondApproval {
+                if autoApproveDelay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(autoApproveDelay * 1_000_000_000))
+                }
                 let sent = await respondApproval(sessionID: sessionID, choice: choice)
                 if sent { awaitingResume = true }
             }
@@ -111,6 +117,9 @@ public final class ManagedSession: @unchecked Sendable {
             transition(.needsYou(.clarification))
             onNeedsYouRequest?(ev)
             if autoRespondApproval != nil {
+                if autoApproveDelay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(autoApproveDelay * 1_000_000_000))
+                }
                 let answer = autoClarifyUseFirstChoice ? (req.choices.first ?? "Lanjutkan") : "Lanjutkan"
                 let sent = await respondClarify(sessionID: sessionID, requestID: req.requestId, answer: answer)
                 if sent { awaitingResume = true }

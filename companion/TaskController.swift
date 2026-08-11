@@ -79,6 +79,7 @@ final class TaskController {
 
         let managed = ManagedSession(adapter: adapter)
         managed.autoRespondApproval = .once   // spike: auto-approve; keputusan UI = M4
+        managed.autoApproveDelay = 4          // biar request ⚠ sempat teramati
         managed.onStateChange = { [weak self] s in
             Task { @MainActor in self?.setState(s) }
         }
