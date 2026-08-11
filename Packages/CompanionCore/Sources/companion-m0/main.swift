@@ -169,6 +169,130 @@ func wsSpike(duration: TimeInterval = 5) {
     }
 }
 
+/// T0.6 — round trip penuh: server → WS → session.create → prompt.submit → events sampai complete.
+func runTask(prompt: String) {
+    var spawned: Int32?
+    var token: String
+
+    // 1. Server (attach kalau milik kita, spawn kalau belum).
+    let up = GatewayLifecycle.probe(host: GatewayLifecycle.defaultHost, port: GatewayLifecycle.defaultPort, timeout: 1)
+    if up {
+        guard let t = readToken() else {
+            print("server UP tapi token tidak diketahui (bukan spawn kita) — serve-stop dulu kalau punya kita, lalu spawn ulang (D2)")
+            return
+        }
+        token = t
+    } else {
+        token = UUID().uuidString
+        do {
+            let p = try GatewayLifecycle.spawnServer(
+                arguments: GatewayLifecycle.spawnArguments(),
+                logURL: URL(fileURLWithPath: logFile),
+                sessionToken: token)
+            let pid = p.processIdentifier
+            try String(pid).write(toFile: pidFile, atomically: true, encoding: .utf8)
+            try token.write(toFile: tokenFile, atomically: true, encoding: .utf8)
+            let ready = GatewayLifecycle.waitUntilReady(
+                timeout: 30, interval: 0.5,
+                probe: {
+                    GatewayLifecycle.probe(host: GatewayLifecycle.defaultHost, port: GatewayLifecycle.defaultPort, timeout: 0.5)
+                },
+                isProcessAlive: { GatewayLifecycle.processAlive(pid) })
+            guard ready else { print("server tidak ready 30s — cek \(logFile)"); return }
+            spawned = pid
+        } catch {
+            print("spawn gagal: \(error)")
+            return
+        }
+    }
+
+    // 2. Client + event stream.
+    let done = DispatchSemaphore(value: 0)
+    let url = URL(string: GatewayLifecycle.wsURL(token: token))!
+    var sessionID: String?
+    var completed = false
+    let client = JSONRPCClient(url: url) { env in
+        guard let type = env.params?.type else { return }
+        // Abaikan event non-session (gateway.ready) dan event session lain.
+        if let sid = env.params?.session_id, let known = sessionID, sid != known { return }
+        switch type {
+        case "status.update":
+            if let p = env.params?.payload, case .object(let o) = p, case .string(let t)? = o["text"] {
+                print("  · \(t)")
+            }
+        case "message.delta":
+            if let p = env.params?.payload, case .object(let o) = p, case .string(let t)? = o["text"] {
+                print(t, terminator: "")
+                fflush(stdout)
+            }
+        case "message.complete":
+            print()
+            if let p = env.params?.payload, case .object(let o) = p, case .string(let t)? = o["text"] {
+                print("  ✓ \(t.prefix(200))")
+            } else {
+                print("  ✓ selesai")
+            }
+            completed = true
+            done.signal()
+        case "tool.start":
+            if let p = env.params?.payload, case .object(let o) = p, case .string(let name)? = o["name"] {
+                print("  🔧 \(name)")
+            }
+        case "error":
+            if let p = env.params?.payload, case .object(let o) = p, case .string(let t)? = o["message"] {
+                print("  ✗ error: \(t)")
+            }
+            done.signal()
+        default:
+            break
+        }
+    }
+    client.connect()
+
+    // 3. Round trip.
+    let adapter = HermesAdapter(client: client)
+    do {
+        let sid = try awaitSync { try await adapter.createSession(cwd: FileManager.default.currentDirectoryPath) }
+        sessionID = sid
+        print("session \(sid) — prompt: \(prompt)")
+        try awaitSync { try await adapter.submitPrompt(sessionID: sid, text: prompt) }
+    } catch {
+        print("  ✗ \(error)")
+        client.close()
+        cleanupSpawned(spawned)
+        return
+    }
+
+    _ = done.wait(timeout: .now() + 120)
+    client.close()
+    cleanupSpawned(spawned)
+    print(completed ? "[done]" : "[timeout — task belum selesai 120s]")
+}
+
+/// Box hasil async → sync (mode CLI; @unchecked aman karena dipakai satu-shot).
+final class AwaitBox<T>: @unchecked Sendable {
+    var result: Result<T, Error>?
+}
+
+func awaitSync<T>(_ op: @escaping @Sendable () async throws -> T) throws -> T {
+    let box = AwaitBox<T>()
+    let sem = DispatchSemaphore(value: 0)
+    Task {
+        do { box.result = .success(try await op()) }
+        catch { box.result = .failure(error) }
+        sem.signal()
+    }
+    _ = sem.wait(timeout: .now() + 30)
+    return try box.result!.get()
+}
+
+func cleanupSpawned(_ pid: Int32?) {
+    guard let pid else { return }
+    _ = GatewayLifecycle.stopPID(pid, grace: 3)
+    try? FileManager.default.removeItem(atPath: pidFile)
+    try? FileManager.default.removeItem(atPath: tokenFile)
+}
+
 switch args.count >= 2 ? args[1] : "" {
 case "doctor":
     doctor()
@@ -180,6 +304,9 @@ case "serve-stop":
     serveStop()
 case "ws-spike":
     wsSpike()
+case "run":
+    let prompt = args.count >= 3 ? args.dropFirst(2).joined(separator: " ") : "Balas dengan satu kata: ok"
+    runTask(prompt: prompt)
 default:
-    print("usage: companion-m0 [doctor | serve-status | serve-spawn | serve-stop | ws-spike]")
+    print("usage: companion-m0 [doctor | serve-status | serve-spawn | serve-stop | ws-spike | run \"<prompt>\"]")
 }

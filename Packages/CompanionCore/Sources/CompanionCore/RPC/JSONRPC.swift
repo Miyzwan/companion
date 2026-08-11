@@ -1,7 +1,7 @@
 import Foundation
 
 /// Nilai JSON fleksibel buat payload/result yang bentuknya belum kita ketahui.
-public enum JSONValue: Codable, Equatable {
+public enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -48,26 +48,26 @@ public struct JSONRPCRequest<Params: Encodable>: Encodable {
 }
 
 /// Response JSON-RPC 2.0: {"jsonrpc":"2.0","id":N,"result":{...}} ATAU error.
-public struct JSONRPCResponse: Decodable {
+public struct JSONRPCResponse: Decodable, Equatable, Sendable {
     public let id: Int
     public let result: JSONValue?
     public let error: JSONRPCError?
 }
 
-public struct JSONRPCError: Decodable, Equatable {
+public struct JSONRPCError: Decodable, Equatable, Sendable {
     public let code: Int
     public let message: String
 }
 
 /// Event dari server: {"jsonrpc":"2.0","method":"event","params":{"type":"...","session_id":"...","payload":{...}}}
-public struct JSONRPCEnvelope: Decodable {
+public struct JSONRPCEnvelope: Decodable, Equatable, Sendable {
     public let jsonrpc: String
     public let id: Int?
     public let method: String?
     public let params: EventParams?
 }
 
-public struct EventParams: Decodable {
+public struct EventParams: Decodable, Equatable, Sendable {
     public let type: String
     /// OPTIONAL — frame `gateway.ready` TIDAK membawa session_id (diverifikasi spike T0.5).
     public let session_id: String?
