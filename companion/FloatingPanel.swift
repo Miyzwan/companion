@@ -26,12 +26,21 @@ final class PassThroughContainer: NSView {
 
 /// Bubble status: display-only, selalu pass-through (PRD: bubble tidak boleh
 /// jadi mini-terminal; interaksi spike = muncul/hilang lewat klik karakter).
+/// Panel menskalakan ukuran bubble mengikuti lebar teks (background tidak
+/// pernah lebih sempit dari tulisan).
 final class BubbleView: NSView {
+    private let font = NSFont.systemFont(ofSize: 12)
     var text = "● Idle — Ready when you are." {
         didSet { needsDisplay = true }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Ukuran bubble yang pas untuk `text` (teks + padding).
+    func requiredSize(for text: String) -> NSSize {
+        let s = (text as NSString).size(withAttributes: [.font: font])
+        return NSSize(width: s.width + 28, height: s.height + 24)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 4), xRadius: 12, yRadius: 12)
@@ -42,7 +51,7 @@ final class BubbleView: NSView {
         path.stroke()
         let s = text as NSString
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12),
+            .font: font,
             .foregroundColor: NSColor(calibratedWhite: 0.15, alpha: 1),
         ]
         let size = s.size(withAttributes: attrs)
@@ -51,11 +60,22 @@ final class BubbleView: NSView {
     }
 }
 
+/// Renderer karakter (PRD 41): PlaceholderAsset ↔ FinalMascotAsset tanpa
+/// mengubah integration. `.asset` = gambar 2D milik user dari asset catalog.
+enum CharacterRenderer {
+    case placeholder          // lingkaran + glyph (default, tanpa asset)
+    case asset(NSImage)       // gambar user (PNG transparan)
+}
+
 /// Karakter placeholder (PRD 41: ◉ ● ⚠ ✓ ! ○) — satu-satunya area interaktif:
 /// drag untuk memindah panel, klik untuk toggle bubble, klik-kanan untuk menu.
 final class CharacterView: NSView {
     var onToggleBubble: (() -> Void)?
     var onDragEnd: (() -> Void)?
+
+    var renderer: CharacterRenderer = .placeholder {
+        didSet { needsDisplay = true }
+    }
 
     private var dragStart: NSPoint = .zero
     private var didDrag = false
@@ -63,6 +83,17 @@ final class CharacterView: NSView {
     override var acceptsFirstResponder: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
+        switch renderer {
+        case .placeholder:
+            drawPlaceholder()
+        case .asset(let image):
+            // Aspect-fit, centered — area interaktif (frame) tetap sama.
+            let fit = aspectFit(size: image.size, in: bounds)
+            image.draw(in: fit)
+        }
+    }
+
+    private func drawPlaceholder() {
         let circle = NSBezierPath(ovalIn: bounds.insetBy(dx: 4, dy: 4))
         NSColor(calibratedWhite: 0.12, alpha: 1).setFill()
         circle.fill()
@@ -77,6 +108,15 @@ final class CharacterView: NSView {
         let size = glyph.size(withAttributes: attrs)
         glyph.draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2),
                    withAttributes: attrs)
+    }
+
+    /// Rectangle aspect-fit untuk gambar di dalam `container` (centered).
+    private func aspectFit(size: NSSize, in container: NSRect) -> NSRect {
+        guard size.width > 0, size.height > 0 else { return container }
+        let scale = min(container.width / size.width, container.height / size.height)
+        let w = size.width * scale
+        let h = size.height * scale
+        return NSRect(x: container.midX - w / 2, y: container.midY - h / 2, width: w, height: h)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -114,8 +154,15 @@ final class CharacterView: NSView {
 final class FloatingPanelController: NSObject {
     private static let originKey = "companion.floating.origin"
 
-    private let collapsedSize = NSSize(width: 120, height: 88)
-    private let expandedSize = NSSize(width: 120, height: 160)
+    // Layout panel — konstanta bernama biar konsisten. Ubah `characterSize`
+    // saja → panel, margin, dan bubble menyesuaikan otomatis.
+    private var panelWidth: CGFloat { characterSize + 2 * edge }
+    private let characterSize: CGFloat = 120
+    private let edge: CGFloat = 8        // margin bawah & atas
+    private let gap: CGFloat = 8         // jarak karakter → bubble
+    private var collapsedSize: NSSize {
+        NSSize(width: panelWidth, height: edge + characterSize + edge)
+    }
 
     private var panel: NSPanel!
     private var characterView: CharacterView!
@@ -142,6 +189,11 @@ final class FloatingPanelController: NSObject {
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = true
         panel.contentView = buildContentView()
+        // PRD 41: kalau asset "Character" ada di asset catalog → gambar user;
+        // kalau tidak ada → placeholder (fallback aman, tidak crash).
+        if let img = NSImage(named: "Character") {
+            characterView.renderer = .asset(img)
+        }
         self.panel = panel
         panel.orderFrontRegardless()
 
@@ -152,7 +204,8 @@ final class FloatingPanelController: NSObject {
 
     private func buildContentView() -> NSView {
         let container = PassThroughContainer(frame: NSRect(origin: .zero, size: collapsedSize))
-        characterView = CharacterView(frame: NSRect(x: 28, y: 12, width: 64, height: 64))
+        characterView = CharacterView(frame: NSRect(x: (panelWidth - characterSize) / 2, y: edge,
+                                                    width: characterSize, height: characterSize))
         characterView.onToggleBubble = { [weak self] in self?.toggleBubble() }
         characterView.onDragEnd = { [weak self] in self?.dragEnded() }
         bubbleView = BubbleView(frame: NSRect(x: 10, y: 88, width: 100, height: 60))
@@ -166,10 +219,23 @@ final class FloatingPanelController: NSObject {
 
     private func toggleBubble() {
         bubbleVisible.toggle()
-        let newSize = bubbleVisible ? expandedSize : collapsedSize
-        // Bottom-left anchor tetap → bubble muncul di ATAS karakter.
-        panel.setFrame(NSRect(origin: panel.frame.origin, size: newSize), display: true)
-        bubbleView.isHidden = !bubbleVisible
+        if bubbleVisible {
+            let text = "● Idle — Ready when you are."
+            bubbleView.text = text
+            let need = bubbleView.requiredSize(for: text)
+            // Panel selebar bubble (+margin), bottom-left anchor tetap →
+            // bubble mengembang ke ATAS, di atas karakter.
+            let panelW = max(panelWidth, need.width + 2 * edge)
+            bubbleView.frame = NSRect(x: (panelW - need.width) / 2, y: edge + characterSize + gap,
+                                      width: need.width, height: need.height)
+            bubbleView.isHidden = false
+            let panelH = edge + characterSize + gap + need.height + edge
+            panel.setFrame(NSRect(origin: panel.frame.origin,
+                                  size: NSSize(width: panelW, height: panelH)), display: true)
+        } else {
+            bubbleView.isHidden = true
+            panel.setFrame(NSRect(origin: panel.frame.origin, size: collapsedSize), display: true)
+        }
         clampPanelIntoVisibleFrame()
     }
 
