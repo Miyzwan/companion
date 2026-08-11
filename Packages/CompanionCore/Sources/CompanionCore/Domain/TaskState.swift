@@ -48,6 +48,7 @@ public struct TaskStateMachine: Sendable {
 
         // ── dari Starting ──
         case (.starting, .working): return true
+        case (.starting, .needsYou): return true   // agent bisa langsung minta keputusan di awal turn
         case (.starting, .error): return true
         case (.starting, .disconnected): return true
 

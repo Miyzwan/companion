@@ -18,8 +18,9 @@ public enum EventDecoder {
             guard let text = payload?["text"]?.string else { return nil }
             return .messageDelta(text)
         case "message.complete":
-            guard let text = payload?["text"]?.string else { return nil }
-            return .messageComplete(MessageComplete(text: text))
+            // Text OPTIONAL (M0: handle kasus tanpa text) — jangan drop event,
+            // kalau nil run kita tidak akan pernah tahu turn selesai.
+            return .messageComplete(MessageComplete(text: payload?["text"]?.string ?? ""))
         case "tool.start":
             guard let p = payload, let name = p["name"]?.string,
                   let toolId = p["tool_id"]?.string else { return nil }

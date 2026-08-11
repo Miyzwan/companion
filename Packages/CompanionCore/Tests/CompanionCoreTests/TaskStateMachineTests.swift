@@ -112,6 +112,17 @@ import Testing
     #expect(TaskStateMachine.priority(.success) > TaskStateMachine.priority(.idle))
 }
 
+@Test func startingCanAskImmediately() {
+    // Bugfix: agent bisa minta keputusan di DETIK-DETIK AWAL turn (belum ada
+    // bukti working) → starting → needsYou harus legal, kalau tidak state
+    // macet di starting padahal UI harusnya nunjukin Needs You.
+    var m = TaskStateMachine(initial: .idle)
+    let s1 = m.transition(to: .starting); #expect(s1)
+    let s2 = m.transition(to: .needsYou(.approval)); #expect(s2)
+    #expect(m.state == .needsYou(.approval))
+    let s3 = m.transition(to: .working); #expect(s3)   // respond → lanjut
+}
+
 @Test func needsYouSubtypesDistinct() {
     #expect(TaskState.needsYou(.approval) != TaskState.needsYou(.clarification))
     #expect(NeedsYouCase.approval.rawValue == "approval")

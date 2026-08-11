@@ -46,6 +46,14 @@ func loadFixture(_ name: String) throws -> JSONRPCEnvelope {
     #expect(EventDecoder.decode(env) == .messageDelta("halo"))
 }
 
+@Test func decodeMessageCompleteWithoutText() {
+    // Bugfix: message.complete TANPA text harus tetap decode (bukan nil),
+    // kalau nil E2E tidak pernah tahu turn selesai → timeout 120s.
+    let env = JSONRPCEnvelope(jsonrpc: "2.0", id: nil, method: "event",
+        params: EventParams(type: "message.complete", session_id: "s1", payload: .object([:])))
+    #expect(EventDecoder.decode(env) == .messageComplete(MessageComplete(text: "")))
+}
+
 @Test func decodeStatusReady() {
     let env = JSONRPCEnvelope(jsonrpc: "2.0", id: nil, method: "event",
         params: EventParams(type: "status.update", session_id: "s1",
