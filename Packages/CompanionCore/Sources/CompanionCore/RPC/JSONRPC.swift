@@ -1,7 +1,7 @@
 import Foundation
 
 /// Nilai JSON fleksibel buat payload/result yang bentuknya belum kita ketahui.
-enum JSONValue: Codable, Equatable {
+public enum JSONValue: Codable, Equatable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -9,7 +9,7 @@ enum JSONValue: Codable, Equatable {
     case array([JSONValue])
     case object([String: JSONValue])
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         if c.decodeNil() { self = .null }
         else if let b = try? c.decode(Bool.self) { self = .bool(b) }
@@ -20,7 +20,7 @@ enum JSONValue: Codable, Equatable {
         else { throw DecodingError.dataCorruptedError(in: c, debugDescription: "unexpected JSON value") }
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
         switch self {
         case .string(let s): try c.encode(s)
@@ -34,43 +34,50 @@ enum JSONValue: Codable, Equatable {
 }
 
 /// Request JSON-RPC 2.0: {"jsonrpc":"2.0","id":N,"method":"...","params":{...}}
-struct JSONRPCRequest<Params: Encodable>: Encodable {
-    let jsonrpc: String = "2.0"
-    let id: Int
-    let method: String
-    let params: Params
+public struct JSONRPCRequest<Params: Encodable>: Encodable {
+    public let jsonrpc: String = "2.0"
+    public let id: Int
+    public let method: String
+    public let params: Params
+
+    public init(id: Int, method: String, params: Params) {
+        self.id = id
+        self.method = method
+        self.params = params
+    }
 }
 
 /// Response JSON-RPC 2.0: {"jsonrpc":"2.0","id":N,"result":{...}} ATAU error.
-struct JSONRPCResponse: Decodable {
-    let id: Int
-    let result: JSONValue?
-    let error: JSONRPCError?
+public struct JSONRPCResponse: Decodable {
+    public let id: Int
+    public let result: JSONValue?
+    public let error: JSONRPCError?
 }
 
-struct JSONRPCError: Decodable, Equatable {
-    let code: Int
-    let message: String
+public struct JSONRPCError: Decodable, Equatable {
+    public let code: Int
+    public let message: String
 }
 
 /// Event dari server: {"jsonrpc":"2.0","method":"event","params":{"type":"...","session_id":"...","payload":{...}}}
-struct JSONRPCEnvelope: Decodable {
-    let jsonrpc: String
-    let id: Int?
-    let method: String?
-    let params: EventParams?
+public struct JSONRPCEnvelope: Decodable {
+    public let jsonrpc: String
+    public let id: Int?
+    public let method: String?
+    public let params: EventParams?
 }
 
-struct EventParams: Decodable {
-    let type: String
-    let session_id: String
-    let payload: JSONValue?
+public struct EventParams: Decodable {
+    public let type: String
+    public let session_id: String
+    public let payload: JSONValue?
 }
 
 /// Pemberi id otomatis (1, 2, 3, ...) — biar tiap request punya id unik.
-struct JSONRPCIDGenerator {
+public struct JSONRPCIDGenerator {
     private var next = 0
-    mutating func nextID() -> Int {
+    public init() {}
+    public mutating func nextID() -> Int {
         next += 1
         return next
     }
