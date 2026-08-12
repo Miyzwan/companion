@@ -29,9 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         taskController = controller
         panel.bind(controller)
         panel.show()
-        // M3 demo: karakter menampilkan state task Hermes nyata
-        // (Working → Needs You → Working → Done).
-        controller.startDemoTask()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
