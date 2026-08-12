@@ -10,6 +10,14 @@ import Foundation
 // Thread: loop jalan pada executor pemanggil run(); callback dipanggil dari sana
 // (app membungkusnya ke main/actor sesuai kebutuhan).
 
+public protocol ManagedSessionAdapter: Sendable {
+    func submitPrompt(sessionID: String, text: String) async throws
+    func respondApproval(sessionID: String, choice: ApprovalChoice, resolveAll: Bool) async throws -> Int
+    func respondClarify(sessionID: String, requestID: String, answer: String) async throws -> Bool
+}
+
+extension HermesAdapter: ManagedSessionAdapter {}
+
 public final class ManagedSession: @unchecked Sendable {
     /// State berubah (UI update karakter/bubble).
     public var onStateChange: (@Sendable (TaskState) -> Void)?
@@ -31,7 +39,7 @@ public final class ManagedSession: @unchecked Sendable {
 
     public private(set) var state: TaskState = .idle
 
-    private let adapter: HermesAdapter
+    private let adapter: ManagedSessionAdapter
     private let stream: AsyncStream<TaskEvent>
     private let continuation: AsyncStream<TaskEvent>.Continuation
     private var machine = TaskStateMachine(initial: .idle)
@@ -48,6 +56,17 @@ public final class ManagedSession: @unchecked Sendable {
                 continuation.yield(ev)
             }
         }
+    }
+
+    init(adapterForTesting: ManagedSessionAdapter) {
+        self.adapter = adapterForTesting
+        let (s, c) = AsyncStream<TaskEvent>.makeStream()
+        stream = s
+        continuation = c
+    }
+
+    func enqueueTestEvent(_ event: TaskEvent) {
+        continuation.yield(event)
     }
 
     /// Jalankan satu managed task. Return state akhir.
@@ -80,7 +99,8 @@ public final class ManagedSession: @unchecked Sendable {
     public func respondApproval(sessionID: String, choice: ApprovalChoice) async -> Bool {
         guard gate.respond(choice) else { return false }
         do {
-            _ = try await adapter.respondApproval(sessionID: sessionID, choice: choice)
+            _ = try await adapter.respondApproval(sessionID: sessionID, choice: choice, resolveAll: false)
+            awaitingResume = true
             return true
         } catch {
             return false
@@ -89,7 +109,9 @@ public final class ManagedSession: @unchecked Sendable {
 
     /// Kirim jawaban clarify. Return true kalau diterima server (bukan 4009).
     public func respondClarify(sessionID: String, requestID: String, answer: String) async -> Bool {
-        (try? await adapter.respondClarify(sessionID: sessionID, requestID: requestID, answer: answer)) ?? false
+        let sent = (try? await adapter.respondClarify(sessionID: sessionID, requestID: requestID, answer: answer)) ?? false
+        if sent { awaitingResume = true }
+        return sent
     }
 
     // ── Loop internal (mirror ProofRunner M1) ──
@@ -110,7 +132,7 @@ public final class ManagedSession: @unchecked Sendable {
                     try? await Task.sleep(nanoseconds: UInt64(autoApproveDelay * 1_000_000_000))
                 }
                 let sent = await respondApproval(sessionID: sessionID, choice: choice)
-                if sent { awaitingResume = true }
+                _ = sent
             }
 
         case .clarifyRequest(let req):
@@ -122,7 +144,7 @@ public final class ManagedSession: @unchecked Sendable {
                 }
                 let answer = autoClarifyUseFirstChoice ? (req.choices.first ?? "Lanjutkan") : "Lanjutkan"
                 let sent = await respondClarify(sessionID: sessionID, requestID: req.requestId, answer: answer)
-                if sent { awaitingResume = true }
+                _ = sent
             }
 
         case .messageComplete:
