@@ -2,10 +2,18 @@ import Testing
 @testable import CompanionCore
 
 private final class FakeManagedSessionAdapter: ManagedSessionAdapter, @unchecked Sendable {
+    private(set) var submittedPrompts: [String] = []
     private(set) var approvalChoices: [ApprovalChoice] = []
     private(set) var clarificationAnswers: [(String, String)] = []
+    private(set) var interruptedSessionIDs: [String] = []
 
-    func submitPrompt(sessionID: String, text: String) async throws {}
+    func submitPrompt(sessionID: String, text: String) async throws {
+        submittedPrompts.append(text)
+    }
+
+    func interrupt(sessionID: String) async throws {
+        interruptedSessionIDs.append(sessionID)
+    }
 
     func respondApproval(sessionID: String, choice: ApprovalChoice, resolveAll: Bool) async throws -> Int {
         approvalChoices.append(choice)
@@ -26,6 +34,31 @@ private func managedApprovalRequest() -> ApprovalRequest {
         description: "delete in root path",
         allowPermanent: true
     )
+}
+
+@Test func startSubmitsPromptAndAutoApprovalIsDisabledByDefault() async {
+    let adapter = FakeManagedSessionAdapter()
+    let session = ManagedSession(adapterForTesting: adapter)
+    let (states, stateContinuation) = AsyncStream<TaskState>.makeStream()
+    session.onStateChange = { stateContinuation.yield($0) }
+
+    let runTask = Task { await session.run(sessionID: "session", prompt: "inspect project") }
+    var iterator = states.makeAsyncIterator()
+
+    #expect(await iterator.next() == .starting)
+    #expect(adapter.submittedPrompts == ["inspect project"])
+
+    session.enqueueTestEvent(.approvalRequest(managedApprovalRequest()))
+    #expect(await iterator.next() == .needsYou(.approval))
+    #expect(adapter.approvalChoices.isEmpty)
+
+    let stopped = await session.stop(sessionID: "session")
+    #expect(stopped)
+    #expect(adapter.interruptedSessionIDs == ["session"])
+    #expect(session.state == .stopping)
+
+    runTask.cancel()
+    #expect(await runTask.value == .stopping)
 }
 
 @Test func approvalResponseWaitsForRuntimeActivityBeforeWorking() async {
@@ -51,6 +84,44 @@ private func managedApprovalRequest() -> ApprovalRequest {
     session.enqueueTestEvent(.messageComplete(MessageComplete(text: "done")))
     #expect(await iterator.next() == .success)
     #expect(await runTask.value == .success)
+}
+
+@Test func staleClarificationResponseIsRejectedBeforeGatewayCall() async {
+    let adapter = FakeManagedSessionAdapter()
+    let session = ManagedSession(adapterForTesting: adapter)
+    let (states, stateContinuation) = AsyncStream<TaskState>.makeStream()
+    session.onStateChange = { stateContinuation.yield($0) }
+
+    let runTask = Task { await session.run(sessionID: "session", prompt: "ask me") }
+    var iterator = states.makeAsyncIterator()
+    #expect(await iterator.next() == .starting)
+
+    session.enqueueTestEvent(.clarifyRequest(ClarifyRequest(
+        requestId: "current-id",
+        question: "Which folder should I use?",
+        choices: ["Project A", "Project B"]
+    )))
+    #expect(await iterator.next() == .needsYou(.clarification))
+
+    let stale = await session.respondClarify(
+        sessionID: "session",
+        requestID: "stale-id",
+        answer: "Project A"
+    )
+    #expect(!stale)
+    #expect(adapter.clarificationAnswers.isEmpty)
+
+    let current = await session.respondClarify(
+        sessionID: "session",
+        requestID: "current-id",
+        answer: "Project A"
+    )
+    #expect(current)
+    session.enqueueTestEvent(.activity("continuing"))
+    #expect(await iterator.next() == .working)
+    session.enqueueTestEvent(.messageComplete(MessageComplete(text: "done")))
+    #expect(await iterator.next() == .success)
+    _ = await runTask.value
 }
 
 @Test func clarificationResponseWaitsForRuntimeActivityBeforeWorking() async {

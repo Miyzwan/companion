@@ -12,6 +12,7 @@ import Foundation
 
 public protocol ManagedSessionAdapter: Sendable {
     func submitPrompt(sessionID: String, text: String) async throws
+    func interrupt(sessionID: String) async throws
     func respondApproval(sessionID: String, choice: ApprovalChoice, resolveAll: Bool) async throws -> Int
     func respondClarify(sessionID: String, requestID: String, answer: String) async throws -> Bool
 }
@@ -44,6 +45,7 @@ public final class ManagedSession: @unchecked Sendable {
     private let continuation: AsyncStream<TaskEvent>.Continuation
     private var machine = TaskStateMachine(initial: .idle)
     private var gate = ApprovalGate()
+    private var pendingClarifyRequestID: String?
     private var awaitingResume = false
 
     public init(adapter: HermesAdapter) {
@@ -73,6 +75,7 @@ public final class ManagedSession: @unchecked Sendable {
     public func run(sessionID: String, prompt: String) async -> TaskState {
         machine = TaskStateMachine(initial: .idle)
         gate = ApprovalGate()
+        pendingClarifyRequestID = nil
         awaitingResume = false
         do {
             try await adapter.submitPrompt(sessionID: sessionID, text: prompt)
@@ -107,10 +110,29 @@ public final class ManagedSession: @unchecked Sendable {
         }
     }
 
+    /// Hentikan turn melalui `session.interrupt`. State masuk stopping dan
+    /// tetap menunggu event runtime berikutnya sebagai konfirmasi terminal.
+    public func stop(sessionID: String) async -> Bool {
+        guard TaskStateMachine.isLegal(from: machine.state, to: .stopping) else { return false }
+        do {
+            try await adapter.interrupt(sessionID: sessionID)
+            pendingClarifyRequestID = nil
+            gate.invalidate()
+            transition(.stopping)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// Kirim jawaban clarify. Return true kalau diterima server (bukan 4009).
     public func respondClarify(sessionID: String, requestID: String, answer: String) async -> Bool {
+        guard pendingClarifyRequestID == requestID else { return false }
         let sent = (try? await adapter.respondClarify(sessionID: sessionID, requestID: requestID, answer: answer)) ?? false
-        if sent { awaitingResume = true }
+        if sent {
+            pendingClarifyRequestID = nil
+            awaitingResume = true
+        }
         return sent
     }
 
@@ -136,6 +158,7 @@ public final class ManagedSession: @unchecked Sendable {
             }
 
         case .clarifyRequest(let req):
+            pendingClarifyRequestID = req.requestId
             transition(.needsYou(.clarification))
             onNeedsYouRequest?(ev)
             if autoRespondApproval != nil {

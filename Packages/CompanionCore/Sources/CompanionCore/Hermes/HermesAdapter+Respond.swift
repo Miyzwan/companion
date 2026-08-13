@@ -46,6 +46,13 @@ extension HermesAdapter {
         ["session_id": .string(sessionID)]
     }
 
+    /// Kirim `session.interrupt` untuk menghentikan turn aktif.
+    public func interrupt(sessionID: String) async throws {
+        let resp = try await client.send(method: Method.sessionInterrupt,
+                                         params: Self.interruptParams(sessionID: sessionID))
+        if let err = resp.error { throw HermesError.rpc(err.code, err.message) }
+    }
+
     /// Kirim `approval.respond`. Return jumlah approval ter-resolve
     /// (0 = tidak ada pending). Error 5004 dilempar sebagai HermesError.
     public func respondApproval(sessionID: String, choice: ApprovalChoice,
@@ -71,10 +78,4 @@ extension HermesAdapter {
         return true
     }
 
-    /// Kirim `session.interrupt` (stop turn berjalan, PRD 55).
-    public func interrupt(sessionID: String) async throws {
-        let resp = try await client.send(method: Method.sessionInterrupt,
-                                         params: Self.interruptParams(sessionID: sessionID))
-        if let err = resp.error { throw HermesError.rpc(err.code, err.message) }
-    }
 }
