@@ -17,8 +17,16 @@ final class TaskController {
     var onStateChange: ((TaskState) -> Void)?
     /// Jawaban akhir agent (PRD 22). String kosong = bersihkan hasil lama.
     var onAnswer: ((String) -> Void)?
+    /// Approval yang menunggu keputusan + apakah sudah dijawab (PRD 50/51/52).
+    /// nil = tidak ada yang perlu ditawarkan ke user.
+    var onApprovalChange: ((ApprovalRequest?, Bool) -> Void)?
 
     private(set) var state: TaskState = .idle
+    /// Approval terakhir dari gateway (PRD 50). Kontrolnya hanya boleh tampil
+    /// saat state benar-benar `needsYou(.approval)` — lihat ControlPanelModel.
+    private(set) var pendingApproval: ApprovalRequest?
+    /// Keputusan sudah dikirim → tombol mati (PRD 51).
+    private(set) var approvalAnswered = false
     private var lastActivity: String?
     private var decision: String?
     private var client: JSONRPCClient?
@@ -47,6 +55,7 @@ final class TaskController {
         lastActivity = nil
         decision = nil
         onAnswer?("")            // hasil task sebelumnya dibersihkan
+        setApproval(nil)         // approval task lama tidak boleh ikut (PRD 52)
         setState(.starting)
         runTask = Task { [weak self] in
             await self?.run(prompt: prompt, cwd: cwd)
@@ -62,8 +71,13 @@ final class TaskController {
     }
 
     /// Kirim approval yang dipilih user. Tidak ada jalur auto-respond dari UI.
+    /// UI dikunci SEBELUM await (klik kedua tidak pernah sampai ke network),
+    /// dan tetap terkunci walau pengiriman gagal: `ApprovalGate` sudah
+    /// menandai request ini terpakai, jadi percobaan ulang pasti ditolak.
     func respondApproval(choice: ApprovalChoice) async -> Bool {
         guard let managed, let sessionID else { return false }
+        guard pendingApproval != nil, !approvalAnswered else { return false }
+        setApproval(pendingApproval, answered: true)
         return await managed.respondApproval(sessionID: sessionID, choice: choice)
     }
 
@@ -122,6 +136,7 @@ final class TaskController {
                 Task { @MainActor in
                     guard let self else { return }
                     self.decision = event.decisionText
+                    if case .approvalRequest(let req) = event { self.setApproval(req) }
                     self.refreshBubble()
                 }
             }
@@ -148,8 +163,21 @@ final class TaskController {
         if case .needsYou = s {} else {
             decision = nil
         }
+        // PRD 52: begitu task lanjut/berhenti/gagal, approval lama STALE dan
+        // tidak boleh ditawarkan lagi. Aman terhadap urutan callback: state
+        // `needsYou` tidak pernah menghapus approval yang baru saja masuk.
+        if case .needsYou(.approval) = s {} else if pendingApproval != nil {
+            setApproval(nil)
+        }
         onStateChange?(s)
         refreshBubble()
+    }
+
+    /// Satu-satunya tempat approval pending berubah → UI selalu ikut.
+    private func setApproval(_ request: ApprovalRequest?, answered: Bool = false) {
+        pendingApproval = request
+        approvalAnswered = answered
+        onApprovalChange?(request, answered)
     }
 
     private func refreshBubble() {
