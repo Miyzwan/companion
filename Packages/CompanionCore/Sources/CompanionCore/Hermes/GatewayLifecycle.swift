@@ -17,20 +17,39 @@ public struct GatewayLifecycle {
         ["serve", "--skip-build", "--host", host, "--port", String(port)]
     }
 
+    public enum SpawnError: Error, Equatable {
+        case hermesNotFound
+    }
+
     /// Spawn `hermes serve` sebagai child process; stdout/stderr ke log file,
     /// dan inject `HERMES_DASHBOARD_SESSION_TOKEN` (token inilah yang dipakai WS auth).
     /// Integration — hanya dipanggil setelah probe gagal (attach-first).
-    public static func spawnServer(arguments: [String], logURL: URL, sessionToken: String) throws -> Process {
+    ///
+    /// Binary dipanggil lewat PATH ABSOLUT hasil `HermesDetector.resolvedBinaryPath()`,
+    /// BUKAN `/usr/bin/env hermes`: app yang dilaunch dari Finder tidak mewarisi PATH
+    /// shell, sehingga `env hermes` gagal walau hermes terpasang di ~/.local/bin.
+    public static func spawnServer(arguments: [String], logURL: URL, sessionToken: String,
+                                   binaryPath: String? = nil) throws -> Process {
+        guard let binary = binaryPath ?? HermesDetector.resolvedBinaryPath() else {
+            try? "companion: binary `hermes` tidak ditemukan di PATH maupun lokasi instalasi yang dikenal\n"
+                .write(to: logURL, atomically: true, encoding: .utf8)
+            throw SpawnError.hermesNotFound
+        }
         if !FileManager.default.fileExists(atPath: logURL.path) {
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
         }
         let handle = try FileHandle(forWritingTo: logURL)
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["hermes"] + arguments
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = arguments
         // MERGE env, jangan replace — child butuh PATH/HOME dsb; kita cuma nambah token.
         var env = ProcessInfo.processInfo.environment
         env["HERMES_DASHBOARD_SESSION_TOKEN"] = sessionToken
+        // Folder binary ikut dimasukkan ke PATH child supaya proses turunan hermes
+        // tetap menemukan tetangganya walau PATH warisan minim (kasus app GUI).
+        let binDir = (binary as NSString).deletingLastPathComponent
+        env["PATH"] = ([binDir] + (env["PATH"]?.split(separator: ":").map(String.init) ?? []))
+            .joined(separator: ":")
         process.environment = env
         process.standardOutput = handle
         process.standardError = handle

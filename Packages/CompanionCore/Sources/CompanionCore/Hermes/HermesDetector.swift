@@ -49,9 +49,42 @@ public struct HermesDetector {
         self.supportedRange = supportedRange
     }
 
+    /// Lokasi instalasi hermes yang diketahui, dipakai kalau PATH tidak memuatnya.
+    /// `~/.local/bin` adalah lokasi wrapper resmi (Tech Design §2.1).
+    static func knownInstallDirectories(home: String) -> [String] {
+        ["\(home)/.local/bin", "/usr/local/bin", "/opt/homebrew/bin"]
+    }
+
+    /// Kandidat path absolut binary hermes, urut prioritas: isi PATH dulu, lalu
+    /// lokasi instalasi yang diketahui. Murni.
+    ///
+    /// PENTING: app yang dilaunch dari Finder/`open` TIDAK mewarisi PATH shell —
+    /// `launchctl getenv PATH` kosong, jadi child hanya dapat
+    /// /usr/bin:/bin:/usr/sbin:/sbin dan `/usr/bin/env hermes` gagal
+    /// ("env: hermes: No such file or directory"). Karena itu spawn WAJIB pakai
+    /// path absolut hasil resolusi ini, bukan mengandalkan PATH.
+    public static func binaryCandidates(path: String?, home: String) -> [String] {
+        let fromPath = (path ?? "").split(separator: ":").map(String.init)
+        var seen = Set<String>()
+        return (fromPath + knownInstallDirectories(home: home))
+            .filter { !$0.isEmpty && $0.hasPrefix("/") }
+            .map { $0.hasSuffix("/") ? "\($0)hermes" : "\($0)/hermes" }
+            .filter { seen.insert($0).inserted }
+    }
+
     /// Ambil kandidat binary pertama yang benar-benar ada. Murni — `exists` di-inject.
     public static func resolveBinary(in candidates: [String], exists: (String) -> Bool) -> String? {
         candidates.first(where: exists)
+    }
+
+    /// Path absolut binary hermes di mesin ini, atau nil kalau tidak terpasang.
+    /// Integration (menyentuh filesystem + environment).
+    public static func resolvedBinaryPath() -> String? {
+        resolveBinary(
+            in: binaryCandidates(
+                path: ProcessInfo.processInfo.environment["PATH"],
+                home: NSHomeDirectory()),
+            exists: { FileManager.default.isExecutableFile(atPath: $0) })
     }
 
     /// Klasifikasi dari versi (nil = Hermes tidak terpasang). Murni.
@@ -65,9 +98,10 @@ public struct HermesDetector {
 
     /// Jalankan `hermes --version` dan parse hasilnya. Integration (spawn proses).
     public func detectVersion() -> HermesVersion? {
+        guard let binary = Self.resolvedBinaryPath() else { return nil }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["hermes", "--version"]
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = ["--version"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
