@@ -86,6 +86,41 @@ private func managedApprovalRequest() -> ApprovalRequest {
     #expect(await runTask.value == .success)
 }
 
+// T4.4b — jawaban agent harus sampai ke UI (PRD 22: "user-visible message
+// content"). Sebelumnya teks `message.complete` cuma dipakai untuk transisi
+// state lalu dibuang, jadi companion bisa bilang "Done" tanpa pernah bisa
+// menunjukkan hasilnya.
+
+@Test func messageCompleteMeneruskanTeksJawaban() async {
+    let adapter = FakeManagedSessionAdapter()
+    let session = ManagedSession(adapterForTesting: adapter)
+    let (answers, answerContinuation) = AsyncStream<String>.makeStream()
+    session.onMessage = { answerContinuation.yield($0) }
+
+    let runTask = Task { await session.run(sessionID: "session", prompt: "folder apa?") }
+    var iterator = answers.makeAsyncIterator()
+
+    session.enqueueTestEvent(.messageComplete(MessageComplete(text: "Direktori kerja: /tmp/proyek")))
+    #expect(await iterator.next() == "Direktori kerja: /tmp/proyek")
+    #expect(await runTask.value == .success)
+}
+
+@Test func messageCompleteTanpaTeksTetapMenyelesaikanTurnTanpaJawabanKosong() async {
+    // message.complete BOLEH datang tanpa `text` — turn tetap harus selesai,
+    // tapi UI jangan dikirimi jawaban kosong.
+    final class AnswerBox: @unchecked Sendable { var received: [String] = [] }
+    let box = AnswerBox()
+    let adapter = FakeManagedSessionAdapter()
+    let session = ManagedSession(adapterForTesting: adapter)
+    session.onMessage = { box.received.append($0) }
+
+    let runTask = Task { await session.run(sessionID: "session", prompt: "kerjakan") }
+    session.enqueueTestEvent(.messageComplete(MessageComplete(text: "")))
+
+    #expect(await runTask.value == .success)
+    #expect(box.received.isEmpty)
+}
+
 @Test func staleClarificationResponseIsRejectedBeforeGatewayCall() async {
     let adapter = FakeManagedSessionAdapter()
     let session = ManagedSession(adapterForTesting: adapter)

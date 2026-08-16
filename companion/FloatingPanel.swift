@@ -74,9 +74,18 @@ enum CharacterRenderer {
     case asset(NSImage)       // gambar user (PNG transparan)
 }
 
+/// NSPanel borderless TIDAK bisa jadi key window secara default → NSTextField
+/// di control panel tidak akan menerima ketikan. Override ini membuatnya bisa
+/// jadi key TANPA mengaktifkan app (styleMask tetap `.nonactivatingPanel`).
+final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 /// Karakter placeholder (PRD 41: ◉ ● ⚠ ✓ ! ○) — satu-satunya area interaktif:
-/// drag untuk memindah panel, klik untuk toggle bubble, klik-kanan untuk menu.
+/// drag untuk memindah panel, klik untuk membuka control panel (PRD 46),
+/// klik-kanan untuk menu.
 final class CharacterView: NSView {
+    var onClick: (() -> Void)?
     var onToggleBubble: (() -> Void)?
     var onDragEnd: (() -> Void)?
 
@@ -140,7 +149,7 @@ final class CharacterView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if didDrag { onDragEnd?() } else { onToggleBubble?() }
+        if didDrag { onDragEnd?() } else { onClick?() }
         didDrag = false
     }
 
@@ -174,14 +183,16 @@ final class FloatingPanelController: NSObject {
     private var panel: NSPanel!
     private var characterView: CharacterView!
     private var bubbleView: BubbleView!
+    private var controlPanel: ControlPanelView!
     private var bubbleVisible = false
     private var bubbleAutoShown = false
+    private var controlVisible = false
 
     func show() {
         // Accessory: tanpa Dock icon, app tidak pernah "aktif" → tidak mencuri fokus.
         NSApp.setActivationPolicy(.accessory)
 
-        let panel = NSPanel(
+        let panel = KeyablePanel(
             contentRect: NSRect(origin: restoredOrigin(), size: collapsedSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -214,38 +225,75 @@ final class FloatingPanelController: NSObject {
         let container = PassThroughContainer(frame: NSRect(origin: .zero, size: collapsedSize))
         characterView = CharacterView(frame: NSRect(x: (panelWidth - characterSize) / 2, y: edge,
                                                     width: characterSize, height: characterSize))
+        characterView.onClick = { [weak self] in self?.toggleControlPanel() }
         characterView.onToggleBubble = { [weak self] in self?.toggleBubble() }
         characterView.onDragEnd = { [weak self] in self?.dragEnded() }
         bubbleView = BubbleView(frame: NSRect(x: 10, y: 88, width: 100, height: 60))
         bubbleView.isHidden = true
+        controlPanel = ControlPanelView()
+        controlPanel.isHidden = true
         container.addSubview(characterView)
         container.addSubview(bubbleView)
+        container.addSubview(controlPanel)
         return container
     }
 
-    // ── Bubble ──────────────────────────────────────────────────────
+    // ── Bubble & control panel ──────────────────────────────────────
+    // Keduanya menumpuk ke ATAS karakter dari satu anchor kiri-bawah, dan
+    // untuk sekarang tidak pernah tampil bersamaan (pemisahan ambient vs
+    // kontrol dirapikan di T4.8, PRD 45/46).
 
     private func toggleBubble() { setBubbleVisible(!bubbleVisible) }
 
     private func setBubbleVisible(_ visible: Bool) {
         bubbleVisible = visible
-        if visible {
-            bubbleView.isHidden = false
-            resizePanelForBubble()
-        } else {
-            bubbleView.isHidden = true
-            panel.setFrame(NSRect(origin: panel.frame.origin, size: collapsedSize), display: true)
-        }
+        bubbleView.isHidden = !visible
+        if visible { setControlVisible(false, resize: false) }
+        resizePanel()
         clampPanelIntoVisibleFrame()
     }
 
-    /// Ukur ulang panel agar bubble (teks terbaru) muat — bottom-left anchor tetap,
-    /// bubble mengembang ke ATAS di atas karakter.
-    private func resizePanelForBubble() {
-        let need = bubbleView.requiredSize(for: bubbleView.text)
+    /// Klik karakter membuka compact control panel (PRD 46).
+    private func toggleControlPanel() { setControlVisible(!controlVisible) }
+
+    private func setControlVisible(_ visible: Bool, resize: Bool = true) {
+        controlVisible = visible
+        controlPanel.isHidden = !visible
+        if visible {
+            bubbleVisible = false
+            bubbleView.isHidden = true
+        }
+        guard resize else { return }
+        resizePanel()
+        clampPanelIntoVisibleFrame()
+        if visible {
+            // Panel harus jadi key supaya NSTextField menerima ketikan;
+            // `.nonactivatingPanel` menjaga app lain tetap aktif.
+            panel.makeKey()
+            controlPanel.focusPrompt()
+        }
+    }
+
+    /// Ukur ulang panel mengikuti konten yang sedang tampil. Origin kiri-bawah
+    /// tetap → karakter tidak melompat saat panel membesar.
+    private func resizePanel() {
+        let content: NSSize? = controlVisible
+            ? controlPanel.requiredSize
+            : (bubbleVisible ? bubbleView.requiredSize(for: bubbleView.text) : nil)
+
+        guard let need = content else {
+            panel.setFrame(NSRect(origin: panel.frame.origin, size: collapsedSize), display: true)
+            return
+        }
         let panelW = max(panelWidth, need.width + 2 * edge)
-        bubbleView.frame = NSRect(x: (panelW - need.width) / 2, y: edge + characterSize + gap,
-                                  width: need.width, height: need.height)
+        let frame = NSRect(x: (panelW - need.width) / 2, y: edge + characterSize + gap,
+                           width: need.width, height: need.height)
+        if controlVisible {
+            controlPanel.frame = frame
+            controlPanel.needsLayout = true
+        } else {
+            bubbleView.frame = frame
+        }
         let panelH = edge + characterSize + gap + need.height + edge
         panel.setFrame(NSRect(origin: panel.frame.origin,
                               size: NSSize(width: panelW, height: panelH)), display: true)
@@ -257,18 +305,74 @@ final class FloatingPanelController: NSObject {
         controller.onBubbleChange = { [weak self] text in
             Task { @MainActor in self?.setBubbleText(text) }
         }
+        // T4.4 — status di control panel ikut state yang sama dengan bubble.
+        controller.onStateChange = { [weak self] state in
+            Task { @MainActor in self?.controlPanel.update(state: state) }
+        }
+        // T4.4b — jawaban akhir agent (PRD 22) tampil di control panel; tinggi
+        // panel ikut berubah, jadi panel ditata ulang saat jawaban masuk.
+        controller.onAnswer = { [weak self] text in
+            Task { @MainActor in
+                guard let self else { return }
+                self.controlPanel.update(answer: text)
+                if self.controlVisible { self.resizePanel() }
+            }
+        }
+        controlPanel.update(projectPath: restoredProjectPath())
+        controlPanel.onStart = { [weak self] prompt, path in
+            self?.persistProjectPath(path)
+            controller.start(prompt: prompt, cwd: path)
+        }
+        controlPanel.onChooseProject = { [weak self] in self?.chooseProject() }
     }
 
     /// Update teks bubble dari state Hermes. Auto-buka bubble SEKALI saat
     /// state meninggalkan idle (spike M3) — setelah itu user yang kontrol.
+    /// Tidak pernah menimpa control panel yang sedang dibuka user.
     private func setBubbleText(_ text: String) {
         let idleDefault = "◉ Ready when you are."
-        if bubbleView.isHidden && text != idleDefault && !bubbleAutoShown {
+        if !controlVisible && bubbleView.isHidden && text != idleDefault && !bubbleAutoShown {
             bubbleAutoShown = true
             setBubbleVisible(true)
         }
         bubbleView.text = text
-        if bubbleVisible { resizePanelForBubble() }
+        if bubbleVisible { resizePanel() }
+    }
+
+    // ── Project context (PRD 48) ────────────────────────────────────
+
+    private static let projectKey = "companion.project.path"
+
+    /// Pilih folder project. App `.accessory` tidak pernah aktif → aktifkan
+    /// dulu supaya dialog muncul di depan, bukan tersembunyi di belakang.
+    private func chooseProject() {
+        let open = NSOpenPanel()
+        open.canChooseDirectories = true
+        open.canChooseFiles = false
+        open.allowsMultipleSelection = false
+        open.prompt = "Choose"
+        let current = controlPanel.projectPath
+        if ControlPanelView.directoryExists(current) {
+            open.directoryURL = URL(fileURLWithPath: current)
+        }
+        NSApp.activate()
+        guard open.runModal() == .OK, let url = open.url else { return }
+        controlPanel.update(projectPath: url.path)
+        persistProjectPath(url.path)
+    }
+
+    private func persistProjectPath(_ path: String) {
+        UserDefaults.standard.set(path, forKey: Self.projectKey)
+    }
+
+    /// Folder terakhir yang dipakai; fallback ke home directory supaya selalu
+    /// ada context valid saat pertama kali dijalankan.
+    private func restoredProjectPath() -> String {
+        if let saved = UserDefaults.standard.string(forKey: Self.projectKey),
+           ControlPanelView.directoryExists(saved) {
+            return saved
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.path
     }
 
     // ── Drag ────────────────────────────────────────────────────────

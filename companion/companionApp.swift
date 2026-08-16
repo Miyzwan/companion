@@ -27,8 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController = panel
         let controller = TaskController()
         taskController = controller
-        panel.bind(controller)
+        // show() yang membangun content view (karakter/bubble/control panel),
+        // jadi bind() WAJIB sesudahnya — sebelum itu control panel belum ada.
         panel.show()
+        panel.bind(controller)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

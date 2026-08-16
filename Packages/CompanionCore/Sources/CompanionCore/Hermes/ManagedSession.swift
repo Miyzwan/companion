@@ -26,6 +26,9 @@ public final class ManagedSession: @unchecked Sendable {
     public var onNeedsYouRequest: (@Sendable (TaskEvent) -> Void)?
     /// Text aktivitas (status.update) — "apa yang Hermes kerjakan" (PRD: Know what Hermes is doing).
     public var onActivity: (@Sendable (String) -> Void)?
+    /// Jawaban akhir agent dari `message.complete` (PRD 22: user-visible message
+    /// content). Tidak dipanggil kalau event datang tanpa teks.
+    public var onMessage: (@Sendable (String) -> Void)?
     /// Loop berakhir (terminal state).
     public var onFinished: (@Sendable (TaskState) -> Void)?
 
@@ -170,10 +173,20 @@ public final class ManagedSession: @unchecked Sendable {
                 _ = sent
             }
 
-        case .messageComplete:
+        case .messageComplete(let message):
             if case .needsYou = machine.state {
                 onNeedsYouRequest?(ev)   // biar UI tahu anomali; tidak crash
             }
+            // Teks boleh kosong (event tetap menutup turn) — jangan kirim
+            // jawaban kosong ke UI.
+            if !message.text.isEmpty { onMessage?(message.text) }
+            // Turn yang selesai TANPA event perantara hanya punya message.complete.
+            // `starting → success` ilegal (state machine), jadi tanpa promosi ini
+            // transisi ditolak, loop tidak pernah break, dan run() menggantung
+            // selamanya — memblokir semua task berikutnya. Event ini sendiri sudah
+            // bukti runtime menjalankan turn, jadi lewat working dulu (PRD 50 tetap
+            // aman: yang dilarang adalah needsYou → success).
+            if machine.state == .starting { transition(.working) }
             transition(.success)
             gate.invalidate()            // PRD 52: approval lama non-interaktif
 

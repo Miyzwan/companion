@@ -15,6 +15,8 @@ final class TaskController {
     var onBubbleChange: ((String) -> Void)?
     /// State berubah (panel bisa pakai untuk visual karakter nanti).
     var onStateChange: ((TaskState) -> Void)?
+    /// Jawaban akhir agent (PRD 22). String kosong = bersihkan hasil lama.
+    var onAnswer: ((String) -> Void)?
 
     private(set) var state: TaskState = .idle
     private var lastActivity: String?
@@ -30,18 +32,24 @@ final class TaskController {
     private let pidURL = URL(fileURLWithPath: "/tmp/companion-serve.pid")
     private let tokenURL = URL(fileURLWithPath: "/tmp/companion-serve.token")
 
-    /// Mulai satu managed task dari prompt. Tidak ada auto-approval:
-    /// approval/clarification hanya dikirim lewat API respond eksplisit.
+    /// Mulai satu managed task dari prompt, dengan `cwd` = folder project yang
+    /// dipilih user (PRD 48). Tidak ada auto-approval: approval/clarification
+    /// hanya dikirim lewat API respond eksplisit.
     @discardableResult
-    func start(prompt: String) -> Bool {
+    func start(prompt: String, cwd: String) -> Bool {
         let prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, runTask == nil else { return false }
 
+        // T4.4 — koneksi run sebelumnya jangan dibiarkan menggantung; tiap task
+        // memakai client + session baru. Server yang kita spawn TIDAK disentuh
+        // (kepemilikannya berumur sepanjang app, lihat stopOwnedGatewayIfNeeded).
+        closePreviousRun()
         lastActivity = nil
         decision = nil
+        onAnswer?("")            // hasil task sebelumnya dibersihkan
         setState(.starting)
         runTask = Task { [weak self] in
-            await self?.run(prompt: prompt)
+            await self?.run(prompt: prompt, cwd: cwd)
         }
         return true
     }
@@ -72,7 +80,15 @@ final class TaskController {
         stopOwnedGatewayIfNeeded()
     }
 
-    private func run(prompt: String) async {
+    /// Tutup client/session run sebelumnya (bukan gateway-nya).
+    private func closePreviousRun() {
+        client?.close()
+        client = nil
+        managed = nil
+        sessionID = nil
+    }
+
+    private func run(prompt: String, cwd: String) async {
         guard let connection = GatewayLifecycle.attachOrSpawn(
             logURL: logURL, pidURL: pidURL, tokenURL: tokenURL
         ) else {
@@ -95,9 +111,7 @@ final class TaskController {
         let adapter = HermesAdapter(client: client)
 
         do {
-            let sid = try await adapter.createSession(
-                cwd: FileManager.default.homeDirectoryForCurrentUser.path
-            )
+            let sid = try await adapter.createSession(cwd: cwd)
             sessionID = sid
             let managed = ManagedSession(adapter: adapter)
             managed.autoRespondApproval = nil
@@ -116,6 +130,9 @@ final class TaskController {
                     self?.lastActivity = text
                     self?.refreshBubble()
                 }
+            }
+            managed.onMessage = { [weak self] text in
+                Task { @MainActor in self?.onAnswer?(text) }
             }
             self.managed = managed
             _ = await managed.run(sessionID: sid, prompt: prompt)
