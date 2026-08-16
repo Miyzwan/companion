@@ -114,4 +114,26 @@ Pekerjaan dipecah per **milestone** (M0 Gateway Proof → M1 Human-in-the-Loop �
 
 Di akhir milestone: tulis `companion/M<N>_RESULT.md` berisi bukti acceptance (output command nyata), temuan teknis, dan hal yang sengaja ditunda.
 
-Status sekarang: **M0–M3 LULUS. M4 (Mac Product Loop) sedang berjalan** — app sudah idle saat launch dan `TaskController` sudah mengekspos API `start`/`stop`/`respondApproval`/`respondClarify`; yang belum: UI input task + pilih folder project, kontrol Allow/Deny, kontrol clarify, tombol Stop, dan integrasi panel (PRD §47–§55).
+## Status
+
+**M0–M3 LULUS. M4 (Mac Product Loop) sedang berjalan.**
+
+| Task | Status | Isi |
+|---|---|---|
+| M4.1 | ✅ | app idle saat launch (auto-demo M3 dibuang) |
+| M4.2 | ✅ | `ManagedSession` tidak memalsukan `working` setelah respond (PRD 50) |
+| M4.3 | ✅ | `TaskController` mengekspos `start`/`stop`/`respondApproval`/`respondClarify` |
+| M4.4 | ✅ | control panel: input task (PRD 47) + folder project (PRD 48) + jawaban akhir (PRD 22) |
+| M4.5 | ✅ | kontrol approval Allow/Deny (PRD 50/51/52) + bubble ambient tiap task (PRD 45) |
+| M4.6 | ⬜ | kontrol clarification (PRD 53) |
+| M4.7 | ⬜ | Stop Task + quit aman (PRD 55/56) |
+| M4.8 | ⬜ | layout panel per-state (PRD 46) |
+| M4.9 | ⬜ | acceptance E2E + `companion/M4_RESULT.md` |
+
+Baseline test: **102** (paket). Verifikasi manual E2E memakai agent Hermes sungguhan → menghabiskan token, minta konfirmasi user dulu.
+
+### Utang teknis yang sudah diketahui (tutup di M4.9)
+
+- `GatewayLifecycle.spawnServer` membuka log via `FileHandle(forWritingTo:)` → menulis dari offset 0 tanpa truncate, isi log bisa tercampur sisa run lama.
+- Jalur anomali `needsYou → message.complete` masih bisa menggantung: `needsYou → success` ilegal (PRD 50) jadi transisi ditolak dan loop `run()` tidak pernah break. Jalur `starting → message.complete` sudah ditutup (promosi lewat `working`); yang ini menyentuh aturan PRD 50 jadi sengaja belum diubah.
+- Dark Mode belum didukung: control panel + bubble dikunci `NSAppearance(named: .aqua)` karena latarnya digambar terang.
