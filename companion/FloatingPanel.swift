@@ -184,9 +184,18 @@ final class FloatingPanelController: NSObject {
     private var characterView: CharacterView!
     private var bubbleView: BubbleView!
     private var controlPanel: ControlPanelView!
-    private var bubbleVisible = false
-    private var bubbleAutoShown = false
+    private var bubblePreference: BubblePreference = .auto
+    private var currentState: TaskState = .idle
     private var controlVisible = false
+
+    /// Visibilitas bubble TIDAK disimpan sebagai flag sendiri — selalu
+    /// diturunkan dari (preferensi user, state, panel terbuka). Flag terpisah
+    /// dulu bikin bubble hanya pernah terbuka otomatis sekali seumur app.
+    private var bubbleVisibility: BubbleVisibility {
+        BubbleVisibility(preference: bubblePreference, state: currentState,
+                         controlPanelOpen: controlVisible)
+    }
+    private var bubbleVisible: Bool { bubbleVisibility.isVisible }
 
     func show() {
         // Accessory: tanpa Dock icon, app tidak pernah "aktif" → tidak mencuri fokus.
@@ -243,12 +252,17 @@ final class FloatingPanelController: NSObject {
     // untuk sekarang tidak pernah tampil bersamaan (pemisahan ambient vs
     // kontrol dirapikan di T4.8, PRD 45/46).
 
-    private func toggleBubble() { setBubbleVisible(!bubbleVisible) }
+    /// Menu klik-kanan "Toggle Bubble" — preferensi eksplisit user, berlaku
+    /// sampai task berikutnya (lihat onStateChange).
+    private func toggleBubble() {
+        bubblePreference = bubbleVisibility.toggled()
+        if bubblePreference == .forcedOn { setControlVisible(false, resize: false) }
+        syncBubble()
+    }
 
-    private func setBubbleVisible(_ visible: Bool) {
-        bubbleVisible = visible
-        bubbleView.isHidden = !visible
-        if visible { setControlVisible(false, resize: false) }
+    /// Satu-satunya tempat visibilitas bubble diterapkan ke view.
+    private func syncBubble() {
+        bubbleView.isHidden = !bubbleVisible
         resizePanel()
         clampPanelIntoVisibleFrame()
     }
@@ -256,17 +270,19 @@ final class FloatingPanelController: NSObject {
     /// Klik karakter membuka compact control panel (PRD 46).
     private func toggleControlPanel() { setControlVisible(!controlVisible) }
 
-    private func setControlVisible(_ visible: Bool, resize: Bool = true) {
+    /// `takeFocus` hanya boleh true kalau USER yang membuka panel. Panel yang
+    /// terbuka sendiri (mis. approval masuk) TIDAK boleh merebut keyboard dari
+    /// app yang sedang dipakai; tombol Allow/Deny tetap bisa diklik tanpa key.
+    private func setControlVisible(_ visible: Bool, resize: Bool = true, takeFocus: Bool = true) {
         controlVisible = visible
         controlPanel.isHidden = !visible
-        if visible {
-            bubbleVisible = false
-            bubbleView.isHidden = true
-        }
+        // Bubble ikut aturan turunan: sembunyi selama panel terbuka, muncul
+        // lagi sendiri begitu panel ditutup (kalau masih ada yang dilaporkan).
+        bubbleView.isHidden = !bubbleVisible
         guard resize else { return }
         resizePanel()
         clampPanelIntoVisibleFrame()
-        if visible {
+        if visible && takeFocus {
             // Panel harus jadi key supaya NSTextField menerima ketikan;
             // `.nonactivatingPanel` menjaga app lain tetap aktif.
             panel.makeKey()
@@ -306,8 +322,18 @@ final class FloatingPanelController: NSObject {
             Task { @MainActor in self?.setBubbleText(text) }
         }
         // T4.4 — status di control panel ikut state yang sama dengan bubble.
+        // T4.5: state juga menentukan apakah blok approval tampil (PRD 52),
+        // jadi tinggi panel bisa berubah → tata ulang.
         controller.onStateChange = { [weak self] state in
-            Task { @MainActor in self?.controlPanel.update(state: state) }
+            Task { @MainActor in
+                guard let self else { return }
+                // Task baru → bubble kembali otomatis (PRD 45). Kalau user
+                // menutupnya di task lalu, itu berlaku untuk task itu saja.
+                if state == .starting { self.bubblePreference = BubbleVisibility.preferenceForNewTask }
+                self.currentState = state
+                self.controlPanel.update(state: state)
+                if self.controlVisible { self.resizePanel() } else { self.syncBubble() }
+            }
         }
         // T4.4b — jawaban akhir agent (PRD 22) tampil di control panel; tinggi
         // panel ikut berubah, jadi panel ditata ulang saat jawaban masuk.
@@ -318,25 +344,38 @@ final class FloatingPanelController: NSObject {
                 if self.controlVisible { self.resizePanel() }
             }
         }
+        // T4.5 — approval Allow/Deny (PRD 50). Panel dibuka otomatis: keputusan
+        // tidak boleh tersembunyi di balik karakter yang belum diklik.
+        controller.onApprovalChange = { [weak self] request, answered in
+            Task { @MainActor in
+                guard let self else { return }
+                self.controlPanel.update(approval: request, answered: answered)
+                if request != nil && !answered {
+                    self.setControlVisible(true, takeFocus: false)
+                } else if self.controlVisible {
+                    self.resizePanel()
+                }
+            }
+        }
         controlPanel.update(projectPath: restoredProjectPath())
         controlPanel.onStart = { [weak self] prompt, path in
             self?.persistProjectPath(path)
             controller.start(prompt: prompt, cwd: path)
         }
         controlPanel.onChooseProject = { [weak self] in self?.chooseProject() }
+        controlPanel.onApproval = { choice in
+            Task { @MainActor in _ = await controller.respondApproval(choice: choice) }
+        }
     }
 
-    /// Update teks bubble dari state Hermes. Auto-buka bubble SEKALI saat
-    /// state meninggalkan idle (spike M3) — setelah itu user yang kontrol.
-    /// Tidak pernah menimpa control panel yang sedang dibuka user.
+    /// Update teks bubble dari state Hermes. Visibilitasnya diurus `syncBubble`
+    /// (dipicu perubahan state), jadi di sini cukup isi + ukur ulang.
     private func setBubbleText(_ text: String) {
-        let idleDefault = "◉ Ready when you are."
-        if !controlVisible && bubbleView.isHidden && text != idleDefault && !bubbleAutoShown {
-            bubbleAutoShown = true
-            setBubbleVisible(true)
-        }
         bubbleView.text = text
-        if bubbleVisible { resizePanel() }
+        if bubbleVisible {
+            resizePanel()
+            clampPanelIntoVisibleFrame()
+        }
     }
 
     // ── Project context (PRD 48) ────────────────────────────────────
