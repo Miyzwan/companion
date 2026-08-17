@@ -113,11 +113,9 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 0))
-        // Latar panel digambar terang (senada BubbleView M2/M3). Di Dark Mode,
-        // NSButton/placeholder akan memakai warna sistem GELAP (teks putih) →
-        // putih di atas putih alias tidak kelihatan. Kunci appearance ke light
-        // supaya kontrol sistem ikut skema latar ini.
-        appearance = NSAppearance(named: .aqua)
+        // T4.9 — appearance TIDAK dikunci lagi: setiap warna latar kita punya
+        // padanan gelap di PanelTheme, jadi kontrol sistem boleh mengikuti
+        // Dark Mode user tanpa jadi putih-di-atas-putih.
         promptField.placeholderString = "Contoh: rapikan README"
         promptField.font = .systemFont(ofSize: 12)
         promptField.bezelStyle = .roundedBezel
@@ -176,7 +174,7 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         // bisa disalin. Bukan mini-terminal (PRD 45) — hanya hasil akhir.
         Self.configureReadOnlyText(answerText, in: answerScroll, font: .systemFont(ofSize: 12))
         answerScroll.drawsBackground = true
-        answerScroll.backgroundColor = NSColor(calibratedWhite: 0.93, alpha: 1)
+        answerScroll.backgroundColor = PanelTheme.answerBackground
         answerScroll.borderType = .lineBorder
 
         // Perintah yang dimintakan izin: kotaknya dibatasi tinggi tapi BISA
@@ -600,17 +598,17 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 12, yRadius: 12)
-        NSColor(calibratedWhite: 0.98, alpha: 0.98).setFill()
+        PanelTheme.background.setFill()
         path.fill()
-        NSColor(calibratedWhite: 0.75, alpha: 1).setStroke()
+        PanelTheme.border.setStroke()
         path.lineWidth = 1
         path.stroke()
     }
 
     // MARK: - Helper
 
-    private static let primaryText = NSColor(calibratedWhite: 0.15, alpha: 1)
-    private static let secondaryText = NSColor(calibratedWhite: 0.45, alpha: 1)
+    private static let primaryText = PanelTheme.primaryText
+    private static let secondaryText = PanelTheme.secondaryText
 
     /// Folder benar-benar ada DAN memang direktori (PRD 48).
     static func directoryExists(_ path: String) -> Bool {

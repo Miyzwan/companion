@@ -35,9 +35,11 @@ public struct GatewayLifecycle {
                 .write(to: logURL, atomically: true, encoding: .utf8)
             throw SpawnError.hermesNotFound
         }
-        if !FileManager.default.fileExists(atPath: logURL.path) {
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        }
+        // T4.9 — log SELALU dimulai dari nol. `FileHandle(forWritingTo:)` menulis
+        // dari offset 0 TANPA truncate, jadi run baru yang lebih pendek akan
+        // menyisakan ekor log run lama — dan ekor itu terbaca seolah milik run
+        // sekarang saat kita menyuruh user "cek /tmp/companion-serve.log".
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let handle = try FileHandle(forWritingTo: logURL)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)

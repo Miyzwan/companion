@@ -188,11 +188,19 @@ public final class ManagedSession: @unchecked Sendable {
             // `starting → success` ilegal (state machine), jadi tanpa promosi ini
             // transisi ditolak, loop tidak pernah break, dan run() menggantung
             // selamanya — memblokir semua task berikutnya. Event ini sendiri sudah
-            // bukti runtime menjalankan turn, jadi lewat working dulu (PRD 50 tetap
-            // aman: yang dilarang adalah needsYou → success).
+            // bukti runtime menjalankan turn, jadi lewat working dulu.
             if machine.state == .starting { transition(.working) }
+            // T4.9 — jalur yang sama untuk anomali "turn selesai saat kita masih
+            // menunggu jawaban": `clarify.request` di server punya timeout 300s,
+            // lewat itu agent lanjut dengan jawaban kosong dan menutup turn-nya.
+            // Menahannya di `needsYou` berarti run() menggantung selamanya.
+            // PRD 50 melarang mengaku sukses TANPA bukti runtime lanjut —
+            // message.complete justru bukti itu, jadi promosi lewat `working` sah.
+            if case .needsYou = machine.state { transition(.working) }
             transition(.success)
             gate.invalidate()            // PRD 52: approval lama non-interaktif
+            pendingClarifyRequestID = nil // pertanyaan lama tidak bisa dijawab lagi
+            awaitingResume = false
 
         case .failure(let msg):
             _ = msg

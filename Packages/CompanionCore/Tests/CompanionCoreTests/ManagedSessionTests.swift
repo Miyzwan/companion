@@ -244,3 +244,36 @@ private final class StepBox: @unchecked Sendable {
     _ = await runTask.value
     #expect(box.steps == ["✓ write_file · 0.1s"])
 }
+
+// ── T4.9 — anomali: turn selesai SAAT masih menunggu jawaban ──
+
+@Test func messageCompleteSaatNeedsYouTetapMenutupTurn() async {
+    // Nyata terjadi: `clarify.request` punya timeout 300 detik di server; kalau
+    // user tidak menjawab, agent lanjut dengan jawaban kosong dan menyelesaikan
+    // turn-nya. Dulu `needsYou → success` ditolak state machine (PRD 50) → loop
+    // run() tidak pernah break → task berikutnya tidak pernah bisa dimulai.
+    // message.complete ADALAH bukti runtime lanjut, jadi promosi lewat `working`
+    // sah — yang dilarang PRD 50 adalah mengaku sukses TANPA bukti itu.
+    let adapter = FakeManagedSessionAdapter()
+    let session = ManagedSession(adapterForTesting: adapter)
+    let (states, stateContinuation) = AsyncStream<TaskState>.makeStream()
+    session.onStateChange = { stateContinuation.yield($0) }
+
+    let runTask = Task { await session.run(sessionID: "session", prompt: "tanya dulu") }
+    var iterator = states.makeAsyncIterator()
+    #expect(await iterator.next() == .starting)
+
+    session.enqueueTestEvent(.clarifyRequest(ClarifyRequest(
+        requestId: "abc12345", question: "Pilih A atau B?", choices: ["A", "B"])))
+    #expect(await iterator.next() == .needsYou(.clarification))
+
+    session.enqueueTestEvent(.messageComplete(MessageComplete(text: "lanjut tanpa jawaban")))
+    #expect(await iterator.next() == .working)
+    #expect(await iterator.next() == .success)
+    #expect(await runTask.value == .success)
+
+    // Request yang sudah lewat tidak boleh bisa dijawab lagi (server: 4009).
+    let late = await session.respondClarify(sessionID: "session", requestID: "abc12345", answer: "A")
+    #expect(!late)
+    #expect(adapter.clarificationAnswers.isEmpty)
+}

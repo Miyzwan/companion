@@ -47,15 +47,15 @@ final class BubbleView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 4), xRadius: 12, yRadius: 12)
-        NSColor(calibratedWhite: 0.98, alpha: 0.96).setFill()
+        PanelTheme.bubbleBackground.setFill()
         path.fill()
-        NSColor(calibratedWhite: 0.75, alpha: 1).setStroke()
+        PanelTheme.border.setStroke()
         path.lineWidth = 1
         path.stroke()
         let lines = text.components(separatedBy: "\n")
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor(calibratedWhite: 0.15, alpha: 1),
+            .foregroundColor: PanelTheme.primaryText,
         ]
         let lineH = ((lines.first ?? "") as NSString).size(withAttributes: attrs).height
         for (i, line) in lines.enumerated() {
