@@ -97,9 +97,12 @@ hermes serve (JSON-RPC/WS :9119)
 
 ## Dokumen sumber kebenaran
 
-- `companion/Product Requirements Document v3.md` — **FROZEN**. Komentar kode merujuknya lewat nomor section (`// PRD 51`); pertahankan kebiasaan itu saat menambah kode.
-- `companion/Technical Design Document.md` — **dokumen hidup**. Fakta protocol hasil spike dan keputusan arsitektur baru di-append ke sini beserta tanggal, bukan hanya diceritakan di chat.
-- `companion/M0_RESULT.md` … `M3_RESULT.md` — bukti acceptance per milestone (temuan teknis + command cheat sheet).
+Semua dokumen hidup di `docs/` (dipindah dari `companion/` di M4.9 — folder itu adalah
+synchronized group target app, jadi file non-kode di sana ikut terbawa ke bundle).
+
+- `docs/Product Requirements Document v3.md` — **FROZEN**. Komentar kode merujuknya lewat nomor section (`// PRD 51`); pertahankan kebiasaan itu saat menambah kode.
+- `docs/Technical Design Document.md` — **dokumen hidup**. Fakta protocol hasil spike dan keputusan arsitektur baru di-append ke sini beserta tanggal, bukan hanya diceritakan di chat.
+- `docs/M0_RESULT.md` … `M4_RESULT.md` — bukti acceptance per milestone (temuan teknis + command cheat sheet).
 - `Tests/CompanionCoreTests/Fixtures/*.jsonl` — frame JSON-RPC NYATA hasil rekaman; `FixtureContractTests.swift` yang menangkap duluan kalau bentuk payload Hermes berubah. Tambahkan fixture baru saat mengamati event baru.
 
 ## Cara kerja (workflow)
@@ -128,9 +131,9 @@ Di akhir milestone: tulis `companion/M<N>_RESULT.md` berisi bukti acceptance (ou
 | M4.6 | ✅ | kontrol clarification (PRD 53): pertanyaan + pilihan + reply bebas |
 | M4.7 | ✅ | Stop Task + quit aman (PRD 55/56) — keputusan ownership di TDD §12 |
 | M4.8 | ✅ | layout panel per-state (PRD 46): form task baru ↔ laporan task berjalan |
-| M4.9 | ⬜ | acceptance E2E + `companion/M4_RESULT.md` |
+| M4.9 | ✅ | utang teknis ditutup + E2E protocol lulus + `docs/M4_RESULT.md` (klik UI menunggu pass manual user) |
 
-Baseline test: **124** (paket). Verifikasi manual E2E memakai agent Hermes sungguhan → menghabiskan token, minta konfirmasi user dulu.
+Baseline test: **126** (paket). Verifikasi manual E2E memakai agent Hermes sungguhan → menghabiskan token, minta konfirmasi user dulu.
 
 Layout AppKit bisa diverifikasi TANPA agent: compile `companion/ControlPanelView.swift`
 bersama satu `main.swift` kecil memakai toolchain DEV + `-swift-version 5`
@@ -139,8 +142,10 @@ lewat `cacheDisplay(in:to:)`, lalu periksa gambarnya. Init memberwise tipe domai
 (`ClarifyRequest`, `ApprovalRequest`) internal → bangun lewat jalur asli
 `EventDecoder.decode(JSONRPCEnvelope)` dari frame JSON.
 
-### Utang teknis yang sudah diketahui (tutup di M4.9)
+### Utang teknis (ditutup di M4.9)
 
-- `GatewayLifecycle.spawnServer` membuka log via `FileHandle(forWritingTo:)` → menulis dari offset 0 tanpa truncate, isi log bisa tercampur sisa run lama.
-- Jalur anomali `needsYou → message.complete` masih bisa menggantung: `needsYou → success` ilegal (PRD 50) jadi transisi ditolak dan loop `run()` tidak pernah break. Jalur `starting → message.complete` sudah ditutup (promosi lewat `working`); yang ini menyentuh aturan PRD 50 jadi sengaja belum diubah.
-- Dark Mode belum didukung: control panel + bubble dikunci `NSAppearance(named: .aqua)` karena latarnya digambar terang.
+- ✅ Log spawn: `spawnServer` sekarang selalu membuat ulang file log sebelum membuka handle — `FileHandle(forWritingTo:)` menulis dari offset 0 TANPA truncate, jadi dulu ekor log run lama terbaca seolah milik run sekarang.
+- ✅ Jalur anomali `needsYou → message.complete` tidak lagi menggantung: dipromosikan lewat `working` (message.complete = bukti runtime lanjut, jadi PRD 50 tetap dihormati). Penyebab nyatanya `clarify.request` punya timeout 300 detik di server — lewat itu agent lanjut dengan jawaban kosong dan menutup turn.
+- ✅ Dark Mode: `PanelTheme` memberi tiap warna latar padanan gelapnya, jadi kunci `NSAppearance(named: .aqua)` sudah dilepas dan kontrol sistem mengikuti setelan user.
+
+Sisa yang SENGAJA belum dikerjakan (bukan utang M4): recovery setelah restart (PRD 57, M5) dan tombol `Details`/raw log di control panel (PRD 46 menyebutnya bukan P0).
