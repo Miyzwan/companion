@@ -113,6 +113,83 @@ private func panel(state: TaskState,
     #expect(ControlPanelModel.allowChoice(permanent: true) == .always)
 }
 
+// ── T4.8 — layout panel per-state (PRD 46) ──
+
+private func progressPanel(state: TaskState,
+                           taskTitle: String = "rapikan README",
+                           currentActivity: String? = nil,
+                           recentSteps: [String] = [],
+                           elapsedSeconds: Int = 0) -> ControlPanelModel {
+    ControlPanelModel(state: state, prompt: "", projectPath: existingFolder,
+                      taskTitle: taskTitle, currentActivity: currentActivity,
+                      recentSteps: recentSteps, elapsedSeconds: elapsedSeconds)
+}
+
+@Test func panelBergantiModeMengikutiState() {
+    // PRD 46: saat task jalan panel melaporkan task itu, bukan form task baru.
+    for state: TaskState in [.starting, .working, .needsYou(.approval), .stopping] {
+        let model = progressPanel(state: state)
+        #expect(model.mode == .runningTask)
+        #expect(model.showsTaskForm == false)
+        #expect(model.showsProgress)
+    }
+    for state: TaskState in [.idle, .success, .error, .disconnected] {
+        let model = progressPanel(state: state)
+        #expect(model.mode == .newTask)
+        #expect(model.showsTaskForm)
+        #expect(model.showsProgress == false)
+    }
+}
+
+@Test func judulPanelIkutTaskYangSedangJalan() {
+    #expect(progressPanel(state: .working).panelTitle == "rapikan README")
+    #expect(progressPanel(state: .idle).panelTitle == "New Hermes Task")
+    // Judul kosong tidak boleh membuat panel tanpa kepala.
+    #expect(progressPanel(state: .working, taskTitle: "  ").panelTitle == "Hermes Task")
+}
+
+@Test func statusMenampilkanDurasiSaatTaskJalan() {
+    // PRD 46: "● Working · 08:21".
+    #expect(progressPanel(state: .working, elapsedSeconds: 501).statusText == "● Working · 08:21")
+    // Mode form tidak menampilkan durasi task yang sudah selesai.
+    #expect(progressPanel(state: .idle, elapsedSeconds: 501).statusText == "◉ Ready when you are.")
+}
+
+@Test func durasiDiformatMenitDetikLaluJam() {
+    #expect(ControlPanelModel.elapsedText(0) == "00:00")
+    #expect(ControlPanelModel.elapsedText(9) == "00:09")
+    #expect(ControlPanelModel.elapsedText(501) == "08:21")
+    #expect(ControlPanelModel.elapsedText(3661) == "1:01:01")
+    // Jam tidak pernah negatif walau clock mundur.
+    #expect(ControlPanelModel.elapsedText(-5) == "00:00")
+}
+
+@Test func recentDibatasiTigaLangkahTerbaru() {
+    // Panel bukan mini-terminal (PRD 45) — hanya beberapa langkah terakhir.
+    let model = progressPanel(state: .working,
+                              recentSteps: ["read_file", "write_file", "run_tests", "git_status"])
+    #expect(model.visibleRecentSteps == ["git_status", "run_tests", "write_file"])
+}
+
+@Test func currentDanRecentHanyaSaatTaskJalan() {
+    let running = progressPanel(state: .working, currentActivity: "Running tests…",
+                                recentSteps: ["write_file"])
+    #expect(running.currentActivityText == "Running tests…")
+    #expect(running.visibleRecentSteps == ["write_file"])
+
+    let done = progressPanel(state: .success, currentActivity: "Running tests…",
+                             recentSteps: ["write_file"])
+    #expect(done.currentActivityText == nil)
+    #expect(done.visibleRecentSteps.isEmpty)
+}
+
+@Test func langkahSelesaiDiformatDenganDurasi() {
+    #expect(ControlPanelModel.stepText(name: "write_file", duration: 0.076) == "✓ write_file · 0.1s")
+    #expect(ControlPanelModel.stepText(name: "run_tests", duration: 12.4) == "✓ run_tests · 12.4s")
+    // Durasi tidak selalu ada — jangan mengarang angka.
+    #expect(ControlPanelModel.stepText(name: "read_file", duration: nil) == "✓ read_file")
+}
+
 // ── T4.7 — Stop Task (PRD 55) ──
 
 @Test func stopHanyaSaatRuntimeMemangBisaDihentikan() {

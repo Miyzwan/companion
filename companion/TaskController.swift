@@ -22,6 +22,9 @@ final class TaskController {
     var onApprovalChange: ((ApprovalRequest?, Bool) -> Void)?
     /// Clarification yang menunggu jawaban + apakah sudah dikirim (PRD 53).
     var onClarifyChange: ((ClarifyRequest?, Bool) -> Void)?
+    /// Progres task berjalan: aktivitas sekarang + langkah selesai (PRD 46).
+    /// `recentSteps` urut LAMA → BARU; model panel yang membalik & membatasi.
+    var onProgressChange: ((String?, [String]) -> Void)?
 
     private(set) var state: TaskState = .idle
     /// Approval terakhir dari gateway (PRD 50). Kontrolnya hanya boleh tampil
@@ -34,6 +37,9 @@ final class TaskController {
     /// Jawaban sudah dikirim → form mati sampai request berikutnya.
     private(set) var clarifyAnswered = false
     private var lastActivity: String?
+    private var recentSteps: [String] = []
+    /// Awal task berjalan — sumber durasi di panel (PRD 46).
+    private var startedAt: Date?
     private var decision: String?
     private var client: JSONRPCClient?
     private var managed: ManagedSession?
@@ -59,6 +65,9 @@ final class TaskController {
         // (kepemilikannya berumur sepanjang app, lihat stopOwnedGatewayIfNeeded).
         closePreviousRun()
         lastActivity = nil
+        recentSteps = []
+        startedAt = Date()
+        onProgressChange?(nil, [])   // progres task lama tidak boleh ikut
         decision = nil
         onAnswer?("")            // hasil task sebelumnya dibersihkan
         setApproval(nil)         // approval task lama tidak boleh ikut (PRD 52)
@@ -112,6 +121,12 @@ final class TaskController {
     /// Bagian quit yang sinkron (PRD 56). `plan.stopsTask` TIDAK diurus di sini:
     /// interrupt harus di-await sebelum app benar-benar keluar — lihat
     /// AppDelegate.applicationShouldTerminate.
+    /// Umur task berjalan (PRD 46). Nol kalau belum ada task.
+    var elapsedSeconds: Int {
+        guard let startedAt else { return 0 }
+        return Int(Date().timeIntervalSince(startedAt))
+    }
+
     func shutdown(plan: QuitPlan = QuitPolicy.quitWithoutActiveTask) {
         runTask?.cancel()
         client?.close()
@@ -170,8 +185,20 @@ final class TaskController {
             }
             managed.onActivity = { [weak self] text in
                 Task { @MainActor in
-                    self?.lastActivity = text
-                    self?.refreshBubble()
+                    guard let self else { return }
+                    self.lastActivity = text
+                    self.onProgressChange?(text, self.recentSteps)
+                    self.refreshBubble()
+                }
+            }
+            managed.onStepCompleted = { [weak self] tool, duration in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.recentSteps.append(ControlPanelModel.stepText(name: tool.name, duration: duration))
+                    // Panel hanya menampilkan beberapa terakhir — tidak ada
+                    // gunanya menumpuk seluruh riwayat di memori.
+                    self.recentSteps = Array(self.recentSteps.suffix(ControlPanelModel.maxRecentSteps))
+                    self.onProgressChange?(self.lastActivity, self.recentSteps)
                 }
             }
             managed.onMessage = { [weak self] text in

@@ -187,6 +187,9 @@ final class FloatingPanelController: NSObject {
     private var bubblePreference: BubblePreference = .auto
     private var currentState: TaskState = .idle
     private var controlVisible = false
+    /// Jam durasi task (PRD 46) — hidup hanya selama ada turn berjalan.
+    private var elapsedTimer: Timer?
+    private var tickElapsed: (() -> Void)?
 
     /// Visibilitas bubble TIDAK disimpan sebagai flag sendiri — selalu
     /// diturunkan dari (preferensi user, state, panel terbuka). Flag terpisah
@@ -248,9 +251,10 @@ final class FloatingPanelController: NSObject {
     }
 
     // ── Bubble & control panel ──────────────────────────────────────
-    // Keduanya menumpuk ke ATAS karakter dari satu anchor kiri-bawah, dan
-    // untuk sekarang tidak pernah tampil bersamaan (pemisahan ambient vs
-    // kontrol dirapikan di T4.8, PRD 45/46).
+    // Keduanya menumpuk ke ATAS karakter dari satu anchor kiri-bawah dan tidak
+    // pernah tampil bersamaan: bubble = permukaan ambient (PRD 45), control
+    // panel = permukaan kontrol (PRD 46) yang sudah memuat status yang sama.
+    // Aturannya hidup di BubbleVisibility, bukan di sini.
 
     /// Menu klik-kanan "Toggle Bubble" — preferensi eksplisit user, berlaku
     /// sampai task berikutnya (lihat onStateChange).
@@ -332,6 +336,7 @@ final class FloatingPanelController: NSObject {
                 if state == .starting { self.bubblePreference = BubbleVisibility.preferenceForNewTask }
                 self.currentState = state
                 self.controlPanel.update(state: state)
+                self.setElapsedTicking(state.isActiveTurn)
                 if self.controlVisible { self.resizePanel() } else { self.syncBubble() }
             }
         }
@@ -371,9 +376,22 @@ final class FloatingPanelController: NSObject {
                 }
             }
         }
+        // T4.8 — Current/Recent (PRD 46).
+        controller.onProgressChange = { [weak self] current, recent in
+            Task { @MainActor in
+                guard let self else { return }
+                self.controlPanel.update(currentActivity: current, recentSteps: recent)
+                if self.controlVisible { self.resizePanel() }
+            }
+        }
+        tickElapsed = { [weak self] in
+            self?.controlPanel.update(elapsedSeconds: controller.elapsedSeconds)
+        }
         controlPanel.update(projectPath: restoredProjectPath())
         controlPanel.onStart = { [weak self] prompt, path in
             self?.persistProjectPath(path)
+            // Judul panel selama task jalan = prompt yang dikirim (PRD 46).
+            self?.controlPanel.update(taskTitle: prompt)
             controller.start(prompt: prompt, cwd: path)
         }
         controlPanel.onChooseProject = { [weak self] in self?.chooseProject() }
@@ -389,6 +407,23 @@ final class FloatingPanelController: NSObject {
             guard Dialogs.confirmStopTask() else { return }
             Task { @MainActor in _ = await controller.stop() }
         }
+    }
+
+    /// Jam durasi hanya berdetak selama ada turn berjalan. Timer dipasang di
+    /// mode `.common` supaya tetap jalan saat dialog modal (Stop/quit) terbuka.
+    private func setElapsedTicking(_ ticking: Bool) {
+        guard ticking else {
+            elapsedTimer?.invalidate()
+            elapsedTimer = nil
+            return
+        }
+        tickElapsed?()
+        guard elapsedTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.tickElapsed?()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        elapsedTimer = timer
     }
 
     /// Update teks bubble dari state Hermes. Visibilitasnya diurus `syncBubble`

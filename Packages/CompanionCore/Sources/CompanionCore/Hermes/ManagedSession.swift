@@ -26,6 +26,9 @@ public final class ManagedSession: @unchecked Sendable {
     public var onNeedsYouRequest: (@Sendable (TaskEvent) -> Void)?
     /// Text aktivitas (status.update) — "apa yang Hermes kerjakan" (PRD: Know what Hermes is doing).
     public var onActivity: (@Sendable (String) -> Void)?
+    /// Satu langkah selesai (`tool.complete`) — isi blok "Recent" di control
+    /// panel (PRD 46). Durasi ikut apa adanya; runtime tidak selalu mengirimnya.
+    public var onStepCompleted: (@Sendable (ToolInfo, Double?) -> Void)?
     /// Jawaban akhir agent dari `message.complete` (PRD 22: user-visible message
     /// content). Tidak dipanggil kalau event datang tanpa teks.
     public var onMessage: (@Sendable (String) -> Void)?
@@ -147,6 +150,7 @@ public final class ManagedSession: @unchecked Sendable {
             if machine.state == .starting { transition(.working) }
             if awaitingResume { transition(.working); awaitingResume = false }   // PRD 50: bukti lanjut
             if case .activity(let text) = ev { onActivity?(text) }
+            if case .toolCompleted(let tool, let duration) = ev { onStepCompleted?(tool, duration) }
 
         case .approvalRequest(let req):
             transition(.needsYou(.approval))

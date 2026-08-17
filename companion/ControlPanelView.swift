@@ -56,6 +56,13 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private var choiceButtons: [NSButton] = []
     private let replyField = NSTextField()
     private let sendButton = NSButton()
+    private let currentCaption = ControlPanelView.makeLabel("Current", size: 11, secondary: true)
+    private let currentLabel = ControlPanelView.makeWrappingLabel(size: 12, maxLines: currentMaxLines)
+    private let recentCaption = ControlPanelView.makeLabel("Recent", size: 11, secondary: true)
+    /// Jumlah barisnya tetap (`maxRecentSteps`) → dibuat sekali, disembunyikan
+    /// kalau belum terisi. Tidak perlu bongkar-pasang view seperti radio clarify.
+    private let recentLabels: [NSTextField] = (0..<ControlPanelModel.maxRecentSteps)
+        .map { _ in ControlPanelView.makeLabel("", size: 12) }
     private let stopButton = NSButton()
     private let answerCaption = ControlPanelView.makeLabel("Answer", size: 11, secondary: true)
     private let answerScroll = NSScrollView()
@@ -72,6 +79,10 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private var clarifyAnswered = false
     /// Pilihan radio yang sedang tersorot; nil = user menjawab pakai teks bebas.
     private var selectedChoiceIndex: Int?
+    private var taskTitle = ""
+    private var currentActivity: String?
+    private var recentSteps: [String] = []
+    private var elapsedSeconds = 0
 
     // Layout — dilay out dari ATAS (view ini flipped) memakai konstanta bernama.
     private let pad: CGFloat = 14
@@ -94,6 +105,7 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private static let actionMaxLines = 4
     private static let reasonMaxLines = 3
     private static let questionMaxLines = 4
+    private static let currentMaxLines = 2
 
     override var isFlipped: Bool { true }
 
@@ -180,8 +192,10 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
          projectLabel, chooseButton, statusLabel,
          actionCaption, actionScroll, reasonCaption, reasonLabel,
          permanentCheckbox, denyButton, allowButton,
+         currentCaption, currentLabel, recentCaption,
          clarifyCaption, questionLabel, replyField, sendButton,
          answerCaption, answerScroll, stopButton, startButton].forEach(addSubview)
+        recentLabels.forEach(addSubview)
         setFrameSize(NSSize(width: Self.contentWidth, height: requiredHeight))
         refresh()
     }
@@ -236,6 +250,29 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         needsLayout = true
     }
 
+    /// Judul panel selama task berjalan (PRD 46) = prompt yang dikirim.
+    func update(taskTitle: String) {
+        self.taskTitle = taskTitle
+        refresh()
+    }
+
+    /// Isi blok Current/Recent (PRD 46). `recentSteps` urut LAMA → BARU;
+    /// model yang membalik dan membatasinya.
+    /// Ukuran panel berubah → pemanggil harus menata ulang panel.
+    func update(currentActivity: String?, recentSteps: [String]) {
+        self.currentActivity = currentActivity
+        self.recentSteps = recentSteps
+        refresh()
+        needsLayout = true
+    }
+
+    /// Umur task berjalan. Dipanggil tiap detik → sengaja TIDAK memicu layout
+    /// ulang: teksnya berubah, tingginya tidak.
+    func update(elapsedSeconds: Int) {
+        self.elapsedSeconds = elapsedSeconds
+        refresh()
+    }
+
     /// Ukuran yang dibutuhkan panel untuk memuat kontrol ini.
     var requiredSize: NSSize { NSSize(width: Self.contentWidth, height: requiredHeight) }
 
@@ -249,7 +286,9 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private var model: ControlPanelModel {
         ControlPanelModel(state: state, prompt: promptField.stringValue, projectPath: projectPath,
                           pendingApproval: pendingApproval, approvalAnswered: approvalAnswered,
-                          pendingClarify: pendingClarify, clarifyAnswered: clarifyAnswered)
+                          pendingClarify: pendingClarify, clarifyAnswered: clarifyAnswered,
+                          taskTitle: taskTitle, currentActivity: currentActivity,
+                          recentSteps: recentSteps, elapsedSeconds: elapsedSeconds)
     }
 
     /// Judul pilihan yang tersorot; nil = tidak ada (jawaban lewat teks bebas).
@@ -275,26 +314,59 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         var y = pad
         func place(_ view: NSView, _ rect: NSRect) { if apply { view.frame = rect } }
         func show(_ views: [NSView], _ visible: Bool) { if apply { views.forEach { $0.isHidden = !visible } } }
+        let m = model
 
         place(titleLabel, NSRect(x: pad, y: y, width: w, height: 17))
         y += 17 + 10
 
-        place(promptCaption, NSRect(x: pad, y: y, width: w, height: captionHeight))
-        y += captionHeight + captionGap
-        place(promptField, NSRect(x: pad, y: y, width: w, height: fieldHeight))
-        y += fieldHeight + sectionGap
+        // ── Form task baru (PRD 47/48) — disembunyikan selama task jalan ──
+        let formViews: [NSView] = [promptCaption, promptField, projectCaption,
+                                   projectLabel, chooseButton, startButton]
+        show(formViews, m.showsTaskForm)
+        if m.showsTaskForm {
+            place(promptCaption, NSRect(x: pad, y: y, width: w, height: captionHeight))
+            y += captionHeight + captionGap
+            place(promptField, NSRect(x: pad, y: y, width: w, height: fieldHeight))
+            y += fieldHeight + sectionGap
 
-        place(projectCaption, NSRect(x: pad, y: y, width: w, height: captionHeight))
-        y += captionHeight + captionGap
-        place(projectLabel, NSRect(x: pad, y: y + 2, width: w - chooseWidth - 8, height: 18))
-        place(chooseButton, NSRect(x: width - pad - chooseWidth, y: y, width: chooseWidth, height: 22))
-        y += 22 + sectionGap
+            place(projectCaption, NSRect(x: pad, y: y, width: w, height: captionHeight))
+            y += captionHeight + captionGap
+            place(projectLabel, NSRect(x: pad, y: y + 2, width: w - chooseWidth - 8, height: 18))
+            place(chooseButton, NSRect(x: width - pad - chooseWidth, y: y, width: chooseWidth, height: 22))
+            y += 22 + sectionGap
+        }
 
         place(statusLabel, NSRect(x: pad, y: y, width: w, height: 16))
         y += 16 + 10
 
+        // ── Current / Recent (PRD 46) ──
+        let hasCurrent = m.showsProgress && m.currentActivityText != nil
+        let visibleSteps = m.visibleRecentSteps
+        show([currentCaption, currentLabel], hasCurrent)
+        show([recentCaption], !visibleSteps.isEmpty)
+        if hasCurrent {
+            let currentH = Self.textHeight(m.currentActivityText ?? "", font: currentLabel.font,
+                                           width: w, maxLines: Self.currentMaxLines)
+            place(currentCaption, NSRect(x: pad, y: y, width: w, height: captionHeight))
+            y += captionHeight + captionGap
+            place(currentLabel, NSRect(x: pad, y: y, width: w, height: currentH))
+            y += currentH + 10
+        }
+        if !visibleSteps.isEmpty {
+            place(recentCaption, NSRect(x: pad, y: y, width: w, height: captionHeight))
+            y += captionHeight + captionGap
+            for (i, label) in recentLabels.enumerated() {
+                show([label], i < visibleSteps.count)
+                guard i < visibleSteps.count else { continue }
+                place(label, NSRect(x: pad, y: y, width: w, height: 16))
+                y += 16 + 2
+            }
+            y += 8
+        } else {
+            show(recentLabels, false)
+        }
+
         // ── Approval (PRD 50) ──
-        let m = model
         let approvalViews: [NSView] = [actionCaption, actionScroll, reasonCaption, reasonLabel,
                                        denyButton, allowButton]
         show(approvalViews, m.showsApproval)
@@ -371,7 +443,12 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         if m.canStop {
             place(stopButton, NSRect(x: pad, y: y, width: stopWidth, height: buttonHeight))
         }
-        place(startButton, NSRect(x: width - pad - startWidth, y: y, width: startWidth, height: buttonHeight))
+        if m.showsTaskForm {
+            place(startButton, NSRect(x: width - pad - startWidth, y: y, width: startWidth, height: buttonHeight))
+        }
+        // Baris tombol hanya memakan tinggi kalau memang ada tombolnya —
+        // `starting` tidak punya Stop maupun Start.
+        guard m.showsTaskForm || m.canStop else { return y + pad }
         return y + buttonHeight + pad
     }
 
@@ -389,7 +466,17 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
             ? "Belum dipilih"
             : (projectPath as NSString).abbreviatingWithTildeInPath
         projectLabel.textColor = folderOK ? Self.primaryText : .systemRed
-        statusLabel.stringValue = "\(state.glyph) \(state.statusLine)"
+        titleLabel.stringValue = m.panelTitle
+        titleLabel.toolTip = m.panelTitle
+        statusLabel.stringValue = m.statusText
+
+        currentLabel.stringValue = m.currentActivityText ?? ""
+        currentLabel.toolTip = m.currentActivityText
+        let steps = m.visibleRecentSteps
+        for (i, label) in recentLabels.enumerated() {
+            label.stringValue = i < steps.count ? steps[i] : ""
+            label.textColor = Self.secondaryText
+        }
 
         // Isi approval tetap terbaca setelah dijawab; hanya tombolnya yang mati.
         let action = m.approvalAction ?? ""

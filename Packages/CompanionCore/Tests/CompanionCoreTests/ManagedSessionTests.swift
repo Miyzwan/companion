@@ -213,3 +213,34 @@ private func managedApprovalRequest() -> ApprovalRequest {
     #expect(await iterator.next() == .success)
     _ = await runTask.value
 }
+
+// ── T4.8 — langkah selesai untuk panel "Recent" (PRD 46) ──
+
+private final class StepBox: @unchecked Sendable {
+    var steps: [String] = []
+}
+
+@Test func toolCompleteDilaporkanSebagaiLangkahSelesai() async {
+    let adapter = FakeManagedSessionAdapter()
+    let session = ManagedSession(adapterForTesting: adapter)
+    let box = StepBox()
+    let (states, stateContinuation) = AsyncStream<TaskState>.makeStream()
+    session.onStateChange = { stateContinuation.yield($0) }
+    session.onStepCompleted = { tool, duration in
+        box.steps.append(ControlPanelModel.stepText(name: tool.name, duration: duration))
+    }
+
+    let runTask = Task { await session.run(sessionID: "session", prompt: "tulis file") }
+    var iterator = states.makeAsyncIterator()
+    #expect(await iterator.next() == .starting)
+
+    session.enqueueTestEvent(.toolCompleted(ToolInfo(toolId: "call_1", name: "write_file"),
+                                            duration: 0.076))
+    // `tool.complete` juga bukti runtime jalan → starting dipromosikan.
+    #expect(await iterator.next() == .working)
+
+    session.enqueueTestEvent(.messageComplete(MessageComplete(text: "selesai")))
+    #expect(await iterator.next() == .success)
+    _ = await runTask.value
+    #expect(box.steps == ["✓ write_file · 0.1s"])
+}

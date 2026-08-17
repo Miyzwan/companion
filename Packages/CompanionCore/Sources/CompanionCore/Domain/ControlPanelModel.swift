@@ -23,12 +23,24 @@ public struct ControlPanelModel: Equatable, Sendable {
     public var pendingClarify: ClarifyRequest?
     /// Jawaban clarification sudah dikirim → form mati sampai request berikutnya.
     public var clarifyAnswered: Bool
+    /// Prompt task yang sedang berjalan — jadi judul panel (PRD 46).
+    public var taskTitle: String
+    /// Aktivitas terakhir dari runtime (`status.update`), PRD 46 "Current".
+    public var currentActivity: String?
+    /// Langkah yang sudah selesai, URUTAN LAMA → BARU (PRD 46 "Recent").
+    public var recentSteps: [String]
+    /// Umur task berjalan dalam detik; jam-nya milik app, bukan model.
+    public var elapsedSeconds: Int
 
     public init(state: TaskState, prompt: String, projectPath: String,
                 pendingApproval: ApprovalRequest? = nil,
                 approvalAnswered: Bool = false,
                 pendingClarify: ClarifyRequest? = nil,
-                clarifyAnswered: Bool = false) {
+                clarifyAnswered: Bool = false,
+                taskTitle: String = "",
+                currentActivity: String? = nil,
+                recentSteps: [String] = [],
+                elapsedSeconds: Int = 0) {
         self.state = state
         self.prompt = prompt
         self.projectPath = projectPath
@@ -36,6 +48,77 @@ public struct ControlPanelModel: Equatable, Sendable {
         self.approvalAnswered = approvalAnswered
         self.pendingClarify = pendingClarify
         self.clarifyAnswered = clarifyAnswered
+        self.taskTitle = taskTitle
+        self.currentActivity = currentActivity
+        self.recentSteps = recentSteps
+        self.elapsedSeconds = elapsedSeconds
+    }
+
+    // ── T4.8 — layout per-state (PRD 46) ──
+
+    /// Panel punya dua wajah: form task baru (PRD 47) dan laporan task yang
+    /// sedang berjalan (PRD 46). Bukan dua panel berbeda — satu view yang
+    /// menyembunyikan seksi yang tidak relevan.
+    public enum PanelMode: Equatable, Sendable {
+        case newTask
+        case runningTask
+    }
+
+    public var mode: PanelMode { state.isActiveTurn ? .runningTask : .newTask }
+
+    /// Input task + project + Start. Disembunyikan (bukan sekadar di-disable)
+    /// saat task jalan supaya panel tetap sekecil PRD 43.
+    public var showsTaskForm: Bool { mode == .newTask }
+
+    /// Blok Current/Recent hanya bermakna selama task berjalan.
+    public var showsProgress: Bool { mode == .runningTask }
+
+    /// Judul panel: task yang sedang jalan, atau judul form saat idle.
+    public var panelTitle: String {
+        guard showsProgress else { return "New Hermes Task" }
+        let title = taskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Hermes Task" : title
+    }
+
+    /// Baris status: glyph + kalimat state, plus durasi selama task berjalan
+    /// (PRD 46 "● Working · 08:21").
+    public var statusText: String {
+        let base = "\(state.glyph) \(state.statusLine)"
+        guard showsProgress else { return base }
+        return "\(base) · \(Self.elapsedText(elapsedSeconds))"
+    }
+
+    /// Aktivitas yang sedang berlangsung; nil kalau tidak ada / task selesai.
+    public var currentActivityText: String? {
+        guard showsProgress else { return nil }
+        guard let text = currentActivity, !text.isEmpty else { return nil }
+        return text
+    }
+
+    /// Langkah terakhir dulu, dibatasi `maxRecentSteps` — panel melaporkan
+    /// state, bukan menjadi mini-terminal (PRD 45).
+    public static let maxRecentSteps = 3
+    public var visibleRecentSteps: [String] {
+        guard showsProgress else { return [] }
+        return recentSteps.suffix(Self.maxRecentSteps).reversed()
+    }
+
+    /// mm:ss, naik ke h:mm:ss setelah satu jam. Detik negatif (clock mundur)
+    /// dianggap nol, bukan tampil aneh.
+    public static func elapsedText(_ seconds: Int) -> String {
+        let total = max(0, seconds)
+        let s = total % 60
+        let m = (total / 60) % 60
+        let h = total / 3600
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%02d:%02d", m, s)
+    }
+
+    /// Satu baris "Recent" (PRD 46). Durasi hanya ditulis kalau runtime
+    /// memang mengirimnya.
+    public static func stepText(name: String, duration: Double?) -> String {
+        guard let duration else { return "✓ \(name)" }
+        return "✓ \(name) · \(String(format: "%.1f", duration))s"
     }
 
     /// Ada turn yang sedang berjalan → form task baru dikunci.
