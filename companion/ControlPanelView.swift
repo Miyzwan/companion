@@ -5,6 +5,7 @@
 //  M4 Task 4 — compact control panel (PRD 46): input task (PRD 47) +
 //  project context (PRD 48).
 //  M4 Task 5 — kontrol approval Allow/Deny (PRD 50/51/52).
+//  M4 Task 6 — kontrol clarification: pertanyaan + pilihan + reply (PRD 53).
 //  View ini HANYA merender `ControlPanelModel` dari paket; aturan
 //  enable/disable tidak boleh hidup di sini (paket yang punya test).
 //  AppKit murni — NSHostingView akan membuat seluruh rect hit-testable dan
@@ -25,6 +26,9 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     /// User memutuskan approval (PRD 50). Pengiriman & exactly-once diurus
     /// controller + ApprovalGate, bukan view.
     var onApproval: ((ApprovalChoice) -> Void)?
+    /// User mengirim jawaban clarification (PRD 53) — sudah diresolusi model
+    /// (pilihan radio atau teks bebas), view tidak menebak sendiri.
+    var onClarify: ((String) -> Void)?
 
     private let titleLabel = ControlPanelView.makeLabel("New Hermes Task", size: 13, weight: .semibold)
     private let promptCaption = ControlPanelView.makeLabel("What should Hermes do?", size: 11, secondary: true)
@@ -41,6 +45,14 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private let permanentCheckbox = NSButton()
     private let denyButton = NSButton()
     private let allowButton = NSButton()
+    // Status line di atasnya sudah berbunyi "Needs your input" (PRD 53 judul
+    // card) → caption di sini cukup menamai isinya, senada "Action".
+    private let clarifyCaption = ControlPanelView.makeLabel("Question", size: 11, secondary: true)
+    private let questionLabel = ControlPanelView.makeWrappingLabel(size: 12, maxLines: questionMaxLines)
+    /// Radio pilihan dibuat ulang tiap request (jumlahnya ikut payload).
+    private var choiceButtons: [NSButton] = []
+    private let replyField = NSTextField()
+    private let sendButton = NSButton()
     private let answerCaption = ControlPanelView.makeLabel("Answer", size: 11, secondary: true)
     private let answerScroll = NSScrollView()
     private let answerText = NSTextView()
@@ -52,6 +64,10 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private var answer = ""
     private var pendingApproval: ApprovalRequest?
     private var approvalAnswered = false
+    private var pendingClarify: ClarifyRequest?
+    private var clarifyAnswered = false
+    /// Pilihan radio yang sedang tersorot; nil = user menjawab pakai teks bebas.
+    private var selectedChoiceIndex: Int?
 
     // Layout — dilay out dari ATAS (view ini flipped) memakai konstanta bernama.
     private let pad: CGFloat = 14
@@ -65,10 +81,14 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private let decisionWidth: CGFloat = 84
     private let checkboxHeight: CGFloat = 18
     private let answerHeight: CGFloat = 92
+    private let choiceHeight: CGFloat = 20
+    private let choiceGap: CGFloat = 2
+    private let sendWidth: CGFloat = 84
     /// Perintah yang diminta izin harus terbaca utuh, tapi panel tidak boleh
     /// tumbuh tanpa batas — sisanya tersedia lewat tooltip.
     private static let actionMaxLines = 4
     private static let reasonMaxLines = 3
+    private static let questionMaxLines = 4
 
     override var isFlipped: Bool { true }
 
@@ -117,6 +137,18 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         allowButton.target = self
         allowButton.action = #selector(allowTapped)
 
+        // PRD 53: "Or type a reply…" — jawaban bebas selalu tersedia, termasuk
+        // untuk clarify.request yang datang tanpa `choices`.
+        replyField.placeholderString = "Or type a reply…"
+        replyField.font = .systemFont(ofSize: 12)
+        replyField.bezelStyle = .roundedBezel
+        replyField.delegate = self
+
+        sendButton.title = "Send"
+        sendButton.bezelStyle = .rounded
+        sendButton.target = self
+        sendButton.action = #selector(sendTapped)
+
         // Area jawaban: read-only tapi tetap bisa diseleksi agar isinya
         // bisa disalin. Bukan mini-terminal (PRD 45) — hanya hasil akhir.
         Self.configureReadOnlyText(answerText, in: answerScroll, font: .systemFont(ofSize: 12))
@@ -137,6 +169,7 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
          projectLabel, chooseButton, statusLabel,
          actionCaption, actionScroll, reasonCaption, reasonLabel,
          permanentCheckbox, denyButton, allowButton,
+         clarifyCaption, questionLabel, replyField, sendButton,
          answerCaption, answerScroll, startButton].forEach(addSubview)
         setFrameSize(NSSize(width: Self.contentWidth, height: requiredHeight))
         refresh()
@@ -177,6 +210,21 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         needsLayout = true
     }
 
+    /// Pasang clarification yang menunggu jawaban (nil = tidak ada). Radio
+    /// dibuat ulang hanya kalau requestnya benar-benar berganti — kalau tidak,
+    /// pilihan user hilang tiap kali panel di-refresh.
+    /// Ukuran panel berubah → pemanggil harus menata ulang panel.
+    func update(clarify: ClarifyRequest?, answered: Bool) {
+        if clarify != pendingClarify {
+            pendingClarify = clarify
+            rebuildChoiceButtons(clarify?.choices ?? [])
+            replyField.stringValue = ""
+        }
+        clarifyAnswered = answered
+        refresh()
+        needsLayout = true
+    }
+
     /// Ukuran yang dibutuhkan panel untuk memuat kontrol ini.
     var requiredSize: NSSize { NSSize(width: Self.contentWidth, height: requiredHeight) }
 
@@ -189,7 +237,14 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
 
     private var model: ControlPanelModel {
         ControlPanelModel(state: state, prompt: promptField.stringValue, projectPath: projectPath,
-                          pendingApproval: pendingApproval, approvalAnswered: approvalAnswered)
+                          pendingApproval: pendingApproval, approvalAnswered: approvalAnswered,
+                          pendingClarify: pendingClarify, clarifyAnswered: clarifyAnswered)
+    }
+
+    /// Judul pilihan yang tersorot; nil = tidak ada (jawaban lewat teks bebas).
+    private var selectedChoice: String? {
+        guard let i = selectedChoiceIndex, choiceButtons.indices.contains(i) else { return nil }
+        return choiceButtons[i].title
     }
 
     private var requiredHeight: CGFloat { layoutPass(apply: false) }
@@ -263,6 +318,33 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
             y += buttonHeight + sectionGap
         }
 
+        // ── Clarification (PRD 53) ──
+        // Tidak pernah tampil bersama approval: keduanya menuntut state
+        // `needsYou` yang berbeda, jadi hanya satu blok yang aktif per turn.
+        let clarifyViews: [NSView] = [clarifyCaption, questionLabel, replyField, sendButton]
+        show(clarifyViews, m.showsClarify)
+        show(choiceButtons, m.showsClarify)
+        if m.showsClarify {
+            place(clarifyCaption, NSRect(x: pad, y: y, width: w, height: captionHeight))
+            y += captionHeight + captionGap
+
+            let questionH = Self.textHeight(m.clarifyQuestion ?? "", font: questionLabel.font, width: w,
+                                            maxLines: Self.questionMaxLines)
+            place(questionLabel, NSRect(x: pad, y: y, width: w, height: questionH))
+            y += questionH + 8
+
+            for button in choiceButtons {
+                place(button, NSRect(x: pad, y: y, width: w, height: choiceHeight))
+                y += choiceHeight + choiceGap
+            }
+            if !choiceButtons.isEmpty { y += 6 }
+
+            place(replyField, NSRect(x: pad, y: y, width: w, height: fieldHeight))
+            y += fieldHeight + 8
+            place(sendButton, NSRect(x: width - pad - sendWidth, y: y, width: sendWidth, height: buttonHeight))
+            y += buttonHeight + sectionGap
+        }
+
         // ── Jawaban akhir (PRD 22) ──
         show([answerCaption, answerScroll], !answer.isEmpty)
         if !answer.isEmpty {
@@ -300,10 +382,32 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         denyButton.isEnabled = m.approvalEnabled
         allowButton.isEnabled = m.approvalEnabled
         permanentCheckbox.isEnabled = m.approvalEnabled
+
+        // Pertanyaan tetap terbaca setelah dijawab; hanya kontrolnya yang mati.
+        questionLabel.stringValue = m.clarifyQuestion ?? ""
+        questionLabel.toolTip = m.clarifyQuestion
+        choiceButtons.forEach { $0.isEnabled = m.clarifyEnabled }
+        replyField.isEnabled = m.clarifyEnabled
+        sendButton.isEnabled = m.canSendClarify(selectedChoice: selectedChoice, reply: replyField.stringValue)
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        // Mengetik = menjawab bebas → sorotan radio dilepas. Model memang
+        // memenangkan teks ketikan, tapi panel tidak boleh MENAMPILKAN pilihan
+        // tersorot sementara yang terkirim teks lain.
+        if let field = obj.object as? NSTextField, field === replyField,
+           !replyField.stringValue.isEmpty {
+            clearChoiceSelection()
+        }
         refresh()
+    }
+
+    /// Enter di field reply = Send (PRD 53). Aman dilakukan refleks: ini
+    /// mengirim teks, bukan memberi izin — beda dengan Allow (PRD 50).
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard control === replyField, selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+        sendClarify()
+        return true
     }
 
     // MARK: - Aksi
@@ -333,6 +437,53 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         approvalAnswered = true
         refresh()
         onApproval?(choice)
+    }
+
+    @objc private func sendTapped() { sendClarify() }
+
+    /// Radio yang dipilih meniadakan teks bebas (dan sebaliknya, lihat
+    /// controlTextDidChange) supaya yang terlihat = yang terkirim.
+    @objc private func choiceTapped(_ sender: NSButton) {
+        selectedChoiceIndex = choiceButtons.firstIndex(of: sender)
+        for (i, button) in choiceButtons.enumerated() {
+            button.state = i == selectedChoiceIndex ? .on : .off
+        }
+        replyField.stringValue = ""
+        refresh()
+    }
+
+    /// Kunci form SEKARANG juga supaya klik/Enter kedua tidak mengirim jawaban
+    /// kedua. Kalau pengiriman gagal, controller membuka kuncinya lagi lewat
+    /// `update(clarify:answered:)` — clarify punya request_id, jadi retry aman.
+    private func sendClarify() {
+        guard let answer = model.clarifyAnswer(selectedChoice: selectedChoice,
+                                               reply: replyField.stringValue) else { return }
+        clarifyAnswered = true
+        refresh()
+        onClarify?(answer)
+    }
+
+    private func rebuildChoiceButtons(_ choices: [String]) {
+        choiceButtons.forEach { $0.removeFromSuperview() }
+        choiceButtons = choices.map { title in
+            let button = NSButton()
+            button.setButtonType(.radio)
+            button.title = title
+            button.font = .systemFont(ofSize: 12)
+            button.lineBreakMode = .byTruncatingTail
+            button.toolTip = title
+            button.state = .off
+            button.target = self
+            button.action = #selector(choiceTapped(_:))
+            addSubview(button)
+            return button
+        }
+        selectedChoiceIndex = nil
+    }
+
+    private func clearChoiceSelection() {
+        selectedChoiceIndex = nil
+        choiceButtons.forEach { $0.state = .off }
     }
 
     // MARK: - Menggambar latar (senada BubbleView)

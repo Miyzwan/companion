@@ -112,3 +112,77 @@ private func panel(state: TaskState,
     #expect(ControlPanelModel.allowChoice(permanent: false) == .once)
     #expect(ControlPanelModel.allowChoice(permanent: true) == .always)
 }
+
+// ── T4.6 — kontrol clarification (PRD 53) ──
+
+private func clarify(choices: [String] = ["Keep existing approach", "Replace implementation"]) -> ClarifyRequest {
+    ClarifyRequest(requestId: "req-1",
+                   question: "Which implementation should I use?",
+                   choices: choices)
+}
+
+private func clarifyPanel(state: TaskState,
+                          pendingClarify: ClarifyRequest?,
+                          clarifyAnswered: Bool = false) -> ControlPanelModel {
+    ControlPanelModel(state: state, prompt: "", projectPath: existingFolder,
+                      pendingClarify: pendingClarify, clarifyAnswered: clarifyAnswered)
+}
+
+@Test func clarifyMenampilkanPertanyaanDanPilihanSaatMenungguJawaban() {
+    // PRD 53: pertanyaan + pilihan harus terbaca sebelum user menjawab.
+    let model = clarifyPanel(state: .needsYou(.clarification), pendingClarify: clarify())
+    #expect(model.showsClarify)
+    #expect(model.clarifyEnabled)
+    #expect(model.clarifyQuestion == "Which implementation should I use?")
+    #expect(model.clarifyChoices == ["Keep existing approach", "Replace implementation"])
+}
+
+@Test func clarifyStaleSaatStatePindahDariNeedsYouClarification() {
+    // Request lama tidak boleh ditawarkan lagi; server juga menolaknya (4009).
+    for state: TaskState in [.working, .stopping, .success, .error, .disconnected, .idle,
+                             .needsYou(.approval)] {
+        let model = clarifyPanel(state: state, pendingClarify: clarify())
+        #expect(model.showsClarify == false)
+        #expect(model.clarifyEnabled == false)
+        #expect(model.clarifyQuestion == nil)
+        #expect(model.clarifyChoices.isEmpty)
+    }
+}
+
+@Test func clarifyNonInteraktifSetelahDijawab() {
+    let model = clarifyPanel(state: .needsYou(.clarification), pendingClarify: clarify(),
+                             clarifyAnswered: true)
+    #expect(model.showsClarify)                 // pertanyaan tetap terbaca
+    #expect(model.clarifyEnabled == false)
+    #expect(model.clarifyAnswer(selectedChoice: "Replace implementation", reply: "") == nil)
+}
+
+@Test func clarifyTanpaPendingRequestTidakPernahAktif() {
+    let model = clarifyPanel(state: .needsYou(.clarification), pendingClarify: nil)
+    #expect(model.showsClarify == false)
+    #expect(model.clarifyEnabled == false)
+}
+
+@Test func jawabanKetikanMenangAtasPilihan() {
+    // Teks bebas = maksud yang lebih spesifik daripada radio yang tersorot.
+    let model = clarifyPanel(state: .needsYou(.clarification), pendingClarify: clarify())
+    #expect(model.clarifyAnswer(selectedChoice: "Keep existing approach",
+                                reply: "  pakai pendekatan ketiga  ") == "pakai pendekatan ketiga")
+    #expect(model.clarifyAnswer(selectedChoice: "Keep existing approach", reply: "   ")
+            == "Keep existing approach")
+}
+
+@Test func clarifyTanpaPilihanTetapBisaDijawabTeksBebas() {
+    // Beberapa clarify.request datang tanpa `choices` — form teks harus cukup.
+    let model = clarifyPanel(state: .needsYou(.clarification), pendingClarify: clarify(choices: []))
+    #expect(model.clarifyChoices.isEmpty)
+    #expect(model.canSendClarify(selectedChoice: nil, reply: "pakai folder A"))
+    #expect(model.clarifyAnswer(selectedChoice: nil, reply: "pakai folder A") == "pakai folder A")
+}
+
+@Test func sendMatiSaatBelumAdaJawaban() {
+    let model = clarifyPanel(state: .needsYou(.clarification), pendingClarify: clarify())
+    #expect(model.canSendClarify(selectedChoice: nil, reply: "") == false)
+    #expect(model.canSendClarify(selectedChoice: nil, reply: "\n  ") == false)
+    #expect(model.clarifyAnswer(selectedChoice: nil, reply: "") == nil)
+}

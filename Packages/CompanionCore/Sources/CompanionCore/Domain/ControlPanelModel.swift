@@ -18,15 +18,24 @@ public struct ControlPanelModel: Equatable, Sendable {
     /// Keputusan approval sudah dikirim (PRD 51). Penjaga sebenarnya tetap
     /// `ApprovalGate` di ManagedSession; ini hanya lapisan UI.
     public var approvalAnswered: Bool
+    /// Clarification terakhir yang diterima controller (PRD 53). Sama seperti
+    /// approval: disimpan bukan berarti boleh ditawarkan — lihat `showsClarify`.
+    public var pendingClarify: ClarifyRequest?
+    /// Jawaban clarification sudah dikirim → form mati sampai request berikutnya.
+    public var clarifyAnswered: Bool
 
     public init(state: TaskState, prompt: String, projectPath: String,
                 pendingApproval: ApprovalRequest? = nil,
-                approvalAnswered: Bool = false) {
+                approvalAnswered: Bool = false,
+                pendingClarify: ClarifyRequest? = nil,
+                clarifyAnswered: Bool = false) {
         self.state = state
         self.prompt = prompt
         self.projectPath = projectPath
         self.pendingApproval = pendingApproval
         self.approvalAnswered = approvalAnswered
+        self.pendingClarify = pendingClarify
+        self.clarifyAnswered = clarifyAnswered
     }
 
     /// Ada turn yang sedang berjalan → form task baru dikunci.
@@ -77,5 +86,43 @@ public struct ControlPanelModel: Equatable, Sendable {
     /// permanen, jadi tidak ada varian-nya di sini.
     public static func allowChoice(permanent: Bool) -> ApprovalChoice {
         permanent ? .always : .once
+    }
+
+    // ── T4.6 — kontrol clarification (PRD 53) ──
+
+    /// Blok pertanyaan + jawaban ditampilkan? Aturannya sama dengan approval:
+    /// request yang state-nya sudah pindah berarti STALE (PRD 52) — server pun
+    /// menolak request ID lama dengan error 4009.
+    public var showsClarify: Bool {
+        guard pendingClarify != nil else { return false }
+        guard case .needsYou(.clarification) = state else { return false }
+        return true
+    }
+
+    /// Form jawaban masih bisa dipakai? Sekali terkirim → mati, tapi pertanyaan
+    /// tetap terbaca supaya user tahu apa yang barusan dia jawab.
+    public var clarifyEnabled: Bool { showsClarify && !clarifyAnswered }
+
+    /// Pertanyaan dari agent (PRD 53).
+    public var clarifyQuestion: String? { showsClarify ? pendingClarify?.question : nil }
+
+    /// Pilihan siap-pakai. Boleh kosong — clarify tanpa pilihan tetap sah dan
+    /// dijawab lewat teks bebas ("Or type a reply…").
+    public var clarifyChoices: [String] { showsClarify ? (pendingClarify?.choices ?? []) : [] }
+
+    /// Jawaban yang akan dikirim, atau nil kalau belum ada yang bisa dikirim.
+    /// ATURAN: teks ketikan MENANG atas pilihan — user yang mengetik sedang
+    /// menyatakan maksud yang lebih spesifik daripada radio yang tersorot.
+    public func clarifyAnswer(selectedChoice: String?, reply: String) -> String? {
+        guard clarifyEnabled else { return nil }
+        let typed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty { return typed }
+        guard let choice = selectedChoice, !choice.isEmpty else { return nil }
+        return choice
+    }
+
+    /// Tombol Send bisa ditekan? (tidak pernah mengirim jawaban kosong)
+    public func canSendClarify(selectedChoice: String?, reply: String) -> Bool {
+        clarifyAnswer(selectedChoice: selectedChoice, reply: reply) != nil
     }
 }

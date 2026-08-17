@@ -20,6 +20,8 @@ final class TaskController {
     /// Approval yang menunggu keputusan + apakah sudah dijawab (PRD 50/51/52).
     /// nil = tidak ada yang perlu ditawarkan ke user.
     var onApprovalChange: ((ApprovalRequest?, Bool) -> Void)?
+    /// Clarification yang menunggu jawaban + apakah sudah dikirim (PRD 53).
+    var onClarifyChange: ((ClarifyRequest?, Bool) -> Void)?
 
     private(set) var state: TaskState = .idle
     /// Approval terakhir dari gateway (PRD 50). Kontrolnya hanya boleh tampil
@@ -27,6 +29,10 @@ final class TaskController {
     private(set) var pendingApproval: ApprovalRequest?
     /// Keputusan sudah dikirim → tombol mati (PRD 51).
     private(set) var approvalAnswered = false
+    /// Clarification terakhir dari gateway (PRD 53).
+    private(set) var pendingClarify: ClarifyRequest?
+    /// Jawaban sudah dikirim → form mati sampai request berikutnya.
+    private(set) var clarifyAnswered = false
     private var lastActivity: String?
     private var decision: String?
     private var client: JSONRPCClient?
@@ -56,6 +62,7 @@ final class TaskController {
         decision = nil
         onAnswer?("")            // hasil task sebelumnya dibersihkan
         setApproval(nil)         // approval task lama tidak boleh ikut (PRD 52)
+        setClarify(nil)          // idem untuk pertanyaan task lama (PRD 53)
         setState(.starting)
         runTask = Task { [weak self] in
             await self?.run(prompt: prompt, cwd: cwd)
@@ -86,6 +93,20 @@ final class TaskController {
     func respondClarify(requestID: String, answer: String) async -> Bool {
         guard let managed, let sessionID else { return false }
         return await managed.respondClarify(sessionID: sessionID, requestID: requestID, answer: answer)
+    }
+
+    /// Jawab clarification yang sedang menunggu (PRD 53). Form dikunci SEBELUM
+    /// await supaya klik ganda tidak mengirim dua jawaban. Kalau pengiriman
+    /// GAGAL kuncinya dibuka lagi — beda dengan approval: `clarify.respond`
+    /// membawa `request_id`, jadi percobaan ulang tidak bisa nyasar ke request
+    /// lain (request lama ditolak server dengan error 4009).
+    @discardableResult
+    func respondClarify(answer: String) async -> Bool {
+        guard let request = pendingClarify, !clarifyAnswered else { return false }
+        setClarify(request, answered: true)
+        let sent = await respondClarify(requestID: request.requestId, answer: answer)
+        if !sent, pendingClarify == request { setClarify(request, answered: false) }
+        return sent
     }
 
     func shutdown() {
@@ -137,6 +158,7 @@ final class TaskController {
                     guard let self else { return }
                     self.decision = event.decisionText
                     if case .approvalRequest(let req) = event { self.setApproval(req) }
+                    if case .clarifyRequest(let req) = event { self.setClarify(req) }
                     self.refreshBubble()
                 }
             }
@@ -169,6 +191,11 @@ final class TaskController {
         if case .needsYou(.approval) = s {} else if pendingApproval != nil {
             setApproval(nil)
         }
+        // Aturan stale yang sama untuk clarification (PRD 53): begitu turn
+        // lanjut/berhenti, request ID lama pasti ditolak server (4009).
+        if case .needsYou(.clarification) = s {} else if pendingClarify != nil {
+            setClarify(nil)
+        }
         onStateChange?(s)
         refreshBubble()
     }
@@ -178,6 +205,13 @@ final class TaskController {
         pendingApproval = request
         approvalAnswered = answered
         onApprovalChange?(request, answered)
+    }
+
+    /// Satu-satunya tempat clarification pending berubah → UI selalu ikut.
+    private func setClarify(_ request: ClarifyRequest?, answered: Bool = false) {
+        pendingClarify = request
+        clarifyAnswered = answered
+        onClarifyChange?(request, answered)
     }
 
     private func refreshBubble() {

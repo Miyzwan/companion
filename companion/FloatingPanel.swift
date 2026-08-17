@@ -357,6 +357,20 @@ final class FloatingPanelController: NSObject {
                 }
             }
         }
+        // T4.6 — clarification (PRD 53). Sama seperti approval: panel dibuka
+        // sendiri (tanpa merebut fokus) karena pertanyaan yang tidak terlihat
+        // membuat task menggantung diam-diam.
+        controller.onClarifyChange = { [weak self] request, answered in
+            Task { @MainActor in
+                guard let self else { return }
+                self.controlPanel.update(clarify: request, answered: answered)
+                if request != nil && !answered {
+                    self.setControlVisible(true, takeFocus: false)
+                } else if self.controlVisible {
+                    self.resizePanel()
+                }
+            }
+        }
         controlPanel.update(projectPath: restoredProjectPath())
         controlPanel.onStart = { [weak self] prompt, path in
             self?.persistProjectPath(path)
@@ -365,6 +379,9 @@ final class FloatingPanelController: NSObject {
         controlPanel.onChooseProject = { [weak self] in self?.chooseProject() }
         controlPanel.onApproval = { choice in
             Task { @MainActor in _ = await controller.respondApproval(choice: choice) }
+        }
+        controlPanel.onClarify = { answer in
+            Task { @MainActor in await controller.respondClarify(answer: answer) }
         }
     }
 
