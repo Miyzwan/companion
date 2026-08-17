@@ -125,12 +125,19 @@ Di akhir milestone: tulis `companion/M<N>_RESULT.md` berisi bukti acceptance (ou
 | M4.3 | ✅ | `TaskController` mengekspos `start`/`stop`/`respondApproval`/`respondClarify` |
 | M4.4 | ✅ | control panel: input task (PRD 47) + folder project (PRD 48) + jawaban akhir (PRD 22) |
 | M4.5 | ✅ | kontrol approval Allow/Deny (PRD 50/51/52) + bubble ambient tiap task (PRD 45) |
-| M4.6 | ⬜ | kontrol clarification (PRD 53) |
+| M4.6 | ✅ | kontrol clarification (PRD 53): pertanyaan + pilihan + reply bebas |
 | M4.7 | ⬜ | Stop Task + quit aman (PRD 55/56) |
 | M4.8 | ⬜ | layout panel per-state (PRD 46) |
 | M4.9 | ⬜ | acceptance E2E + `companion/M4_RESULT.md` |
 
-Baseline test: **102** (paket). Verifikasi manual E2E memakai agent Hermes sungguhan → menghabiskan token, minta konfirmasi user dulu.
+Baseline test: **109** (paket). Verifikasi manual E2E memakai agent Hermes sungguhan → menghabiskan token, minta konfirmasi user dulu.
+
+Layout AppKit bisa diverifikasi TANPA agent: compile `companion/ControlPanelView.swift`
+bersama satu `main.swift` kecil memakai toolchain DEV + `-swift-version 5`
+(`-I/-L Packages/CompanionCore/.build/debug -lCompanionCore`), render view ke PNG
+lewat `cacheDisplay(in:to:)`, lalu periksa gambarnya. Init memberwise tipe domain
+(`ClarifyRequest`, `ApprovalRequest`) internal → bangun lewat jalur asli
+`EventDecoder.decode(JSONRPCEnvelope)` dari frame JSON.
 
 ### Utang teknis yang sudah diketahui (tutup di M4.9)
 
