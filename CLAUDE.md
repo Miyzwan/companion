@@ -119,7 +119,7 @@ Di akhir milestone: tulis `companion/M<N>_RESULT.md` berisi bukti acceptance (ou
 
 ## Status
 
-**M0–M3 LULUS. M4 (Mac Product Loop) sedang berjalan.**
+**M0–M4 LULUS. M5 (recovery setelah restart, PRD 57/58) belum mulai.**
 
 | Task | Status | Isi |
 |---|---|---|
@@ -131,7 +131,7 @@ Di akhir milestone: tulis `companion/M<N>_RESULT.md` berisi bukti acceptance (ou
 | M4.6 | ✅ | kontrol clarification (PRD 53): pertanyaan + pilihan + reply bebas |
 | M4.7 | ✅ | Stop Task + quit aman (PRD 55/56) — keputusan ownership di TDD §12 |
 | M4.8 | ✅ | layout panel per-state (PRD 46): form task baru ↔ laporan task berjalan |
-| M4.9 | ✅ | utang teknis ditutup + E2E protocol lulus + `docs/M4_RESULT.md` (klik UI menunggu pass manual user) |
+| M4.9 | ✅ | utang teknis ditutup + E2E protocol lulus + checklist klik UI di-acc user + `docs/M4_RESULT.md` |
 
 Baseline test: **126** (paket). Verifikasi manual E2E memakai agent Hermes sungguhan → menghabiskan token, minta konfirmasi user dulu.
 

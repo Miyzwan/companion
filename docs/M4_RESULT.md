@@ -1,6 +1,6 @@
 # Milestone 4 — Mac Product Loop: HASIL
 
-> **Tanggal:** 2026-08-17 · **Status:** ✅ LULUS untuk jalur protocol · ⏳ acceptance klik UI menunggu pass manual user (§6)
+> **Tanggal:** 2026-08-17 · **Status:** ✅ LULUS — jalur protocol terbukti mesin (§1), checklist klik UI di-acc user (§6)
 > **Lingkungan:** macOS (Apple Silicon) · Xcode 16 · Swift 6 · Hermes Agent v0.18.0
 > **Lokasi kode:** `~/Documents/GitHub/companion/` (app target + package CompanionCore)
 > **Dokumen acuan:** PRD section 22, 45–48, 50–53, 55–56 · Technical Design Document §12
@@ -150,9 +150,11 @@ karena app target tidak punya test target. View hanya merender model.
 
 ---
 
-## 6. Acceptance klik UI — checklist manual (dijalankan user)
+## 6. Acceptance klik UI — ✅ DI-ACC USER (2026-08-17)
 
-Bagian ini tidak bisa diotomasi: panel melayang harus benar-benar diklik.
+Bagian ini tidak bisa diotomasi: panel melayang harus benar-benar diklik. Sembilan langkah di
+bawah dijalankan dan disetujui langsung oleh user; layout tiap kondisinya sudah diperiksa lebih
+dulu lewat render headless ke PNG (lihat §3.6).
 
 | # | Langkah | Hasil yang benar |
 |---|---|---|
