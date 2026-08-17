@@ -127,10 +127,10 @@ Di akhir milestone: tulis `companion/M<N>_RESULT.md` berisi bukti acceptance (ou
 | M4.5 | ✅ | kontrol approval Allow/Deny (PRD 50/51/52) + bubble ambient tiap task (PRD 45) |
 | M4.6 | ✅ | kontrol clarification (PRD 53): pertanyaan + pilihan + reply bebas |
 | M4.7 | ✅ | Stop Task + quit aman (PRD 55/56) — keputusan ownership di TDD §12 |
-| M4.8 | ⬜ | layout panel per-state (PRD 46) |
+| M4.8 | ✅ | layout panel per-state (PRD 46): form task baru ↔ laporan task berjalan |
 | M4.9 | ⬜ | acceptance E2E + `companion/M4_RESULT.md` |
 
-Baseline test: **116** (paket). Verifikasi manual E2E memakai agent Hermes sungguhan → menghabiskan token, minta konfirmasi user dulu.
+Baseline test: **124** (paket). Verifikasi manual E2E memakai agent Hermes sungguhan → menghabiskan token, minta konfirmasi user dulu.
 
 Layout AppKit bisa diverifikasi TANPA agent: compile `companion/ControlPanelView.swift`
 bersama satu `main.swift` kecil memakai toolchain DEV + `-swift-version 5`
