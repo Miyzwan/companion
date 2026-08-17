@@ -113,6 +113,20 @@ private func panel(state: TaskState,
     #expect(ControlPanelModel.allowChoice(permanent: true) == .always)
 }
 
+// ── T4.7 — Stop Task (PRD 55) ──
+
+@Test func stopHanyaSaatRuntimeMemangBisaDihentikan() {
+    // Ditawarkan hanya kalau transisi ke `stopping` legal — kalau tidak,
+    // tombolnya bohong: `session.interrupt` akan ditolak state machine.
+    // `starting` sengaja TIDAK termasuk (belum ada turn yang berjalan).
+    for state: TaskState in [.working, .needsYou(.approval), .needsYou(.clarification)] {
+        #expect(panel(state: state, pendingApproval: nil).canStop)
+    }
+    for state: TaskState in [.idle, .starting, .stopping, .success, .error, .disconnected] {
+        #expect(panel(state: state, pendingApproval: nil).canStop == false)
+    }
+}
+
 // ── T4.6 — kontrol clarification (PRD 53) ──
 
 private func clarify(choices: [String] = ["Keep existing approach", "Replace implementation"]) -> ClarifyRequest {

@@ -24,6 +24,20 @@ public enum TaskState: Equatable, Sendable {
     case disconnected         // koneksi putus (34)
 }
 
+extension TaskState {
+    /// Ada turn managed yang sedang berjalan (belum terminal). Satu definisi
+    /// dipakai bersama UI (`ControlPanelModel.isBusy`) dan quit (PRD 56) supaya
+    /// keduanya tidak pernah punya pendapat berbeda soal "task masih aktif".
+    public var isActiveTurn: Bool {
+        switch self {
+        case .starting, .working, .needsYou, .stopping:
+            return true
+        case .idle, .success, .error, .disconnected:
+            return false
+        }
+    }
+}
+
 /// Transisi legal antar state. Transisi ilegal ditolak (return false).
 public struct TaskStateMachine: Sendable {
     public private(set) var state: TaskState

@@ -383,6 +383,12 @@ final class FloatingPanelController: NSObject {
         controlPanel.onClarify = { answer in
             Task { @MainActor in await controller.respondClarify(answer: answer) }
         }
+        // T4.7 — Stop Task (PRD 55): konfirmasi dulu, baru interrupt. State
+        // tetap `stopping` sampai runtime mengonfirmasi terminal state.
+        controlPanel.onStop = {
+            guard Dialogs.confirmStopTask() else { return }
+            Task { @MainActor in _ = await controller.stop() }
+        }
     }
 
     /// Update teks bubble dari state Hermes. Visibilitasnya diurus `syncBubble`

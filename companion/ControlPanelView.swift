@@ -29,6 +29,9 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     /// User mengirim jawaban clarification (PRD 53) — sudah diresolusi model
     /// (pilihan radio atau teks bebas), view tidak menebak sendiri.
     var onClarify: ((String) -> Void)?
+    /// User menekan Stop (PRD 55). Konfirmasinya dijalankan pemanggil (dialog
+    /// bukan urusan view), jadi handler ini hanya dipanggil kalau memang mau stop.
+    var onStop: (() -> Void)?
 
     private let titleLabel = ControlPanelView.makeLabel("New Hermes Task", size: 13, weight: .semibold)
     private let promptCaption = ControlPanelView.makeLabel("What should Hermes do?", size: 11, secondary: true)
@@ -53,6 +56,7 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private var choiceButtons: [NSButton] = []
     private let replyField = NSTextField()
     private let sendButton = NSButton()
+    private let stopButton = NSButton()
     private let answerCaption = ControlPanelView.makeLabel("Answer", size: 11, secondary: true)
     private let answerScroll = NSScrollView()
     private let answerText = NSTextView()
@@ -78,6 +82,7 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     private let buttonHeight: CGFloat = 26
     private let chooseWidth: CGFloat = 92
     private let startWidth: CGFloat = 84
+    private let stopWidth: CGFloat = 92
     private let decisionWidth: CGFloat = 84
     private let checkboxHeight: CGFloat = 18
     private let answerHeight: CGFloat = 92
@@ -149,6 +154,12 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         sendButton.target = self
         sendButton.action = #selector(sendTapped)
 
+        stopButton.title = "Stop Task"
+        stopButton.bezelStyle = .rounded
+        stopButton.font = .systemFont(ofSize: 12)
+        stopButton.target = self
+        stopButton.action = #selector(stopTapped)
+
         // Area jawaban: read-only tapi tetap bisa diseleksi agar isinya
         // bisa disalin. Bukan mini-terminal (PRD 45) — hanya hasil akhir.
         Self.configureReadOnlyText(answerText, in: answerScroll, font: .systemFont(ofSize: 12))
@@ -170,7 +181,7 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
          actionCaption, actionScroll, reasonCaption, reasonLabel,
          permanentCheckbox, denyButton, allowButton,
          clarifyCaption, questionLabel, replyField, sendButton,
-         answerCaption, answerScroll, startButton].forEach(addSubview)
+         answerCaption, answerScroll, stopButton, startButton].forEach(addSubview)
         setFrameSize(NSSize(width: Self.contentWidth, height: requiredHeight))
         refresh()
     }
@@ -354,6 +365,12 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
             y += answerHeight + sectionGap
         }
 
+        // Stop berbagi baris dengan Start di sisi berlawanan (PRD 55) —
+        // dua aksi berlawanan tidak boleh bersebelahan dan tertukar klik.
+        show([stopButton], m.canStop)
+        if m.canStop {
+            place(stopButton, NSRect(x: pad, y: y, width: stopWidth, height: buttonHeight))
+        }
         place(startButton, NSRect(x: width - pad - startWidth, y: y, width: startWidth, height: buttonHeight))
         return y + buttonHeight + pad
     }
@@ -389,6 +406,7 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
         choiceButtons.forEach { $0.isEnabled = m.clarifyEnabled }
         replyField.isEnabled = m.clarifyEnabled
         sendButton.isEnabled = m.canSendClarify(selectedChoice: selectedChoice, reply: replyField.stringValue)
+        stopButton.isEnabled = m.canStop
     }
 
     func controlTextDidChange(_ obj: Notification) {
@@ -440,6 +458,11 @@ final class ControlPanelView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func sendTapped() { sendClarify() }
+
+    @objc private func stopTapped() {
+        guard model.canStop else { return }
+        onStop?()
+    }
 
     /// Radio yang dipilih meniadakan teks bebas (dan sebaliknya, lihat
     /// controlTextDidChange) supaya yang terlihat = yang terkirim.

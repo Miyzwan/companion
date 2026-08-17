@@ -109,10 +109,16 @@ final class TaskController {
         return sent
     }
 
-    func shutdown() {
+    /// Bagian quit yang sinkron (PRD 56). `plan.stopsTask` TIDAK diurus di sini:
+    /// interrupt harus di-await sebelum app benar-benar keluar — lihat
+    /// AppDelegate.applicationShouldTerminate.
+    func shutdown(plan: QuitPlan = QuitPolicy.quitWithoutActiveTask) {
         runTask?.cancel()
         client?.close()
-        stopOwnedGatewayIfNeeded()
+        // "Keep Hermes running": task hidup di dalam server yang kita spawn,
+        // jadi servernya sengaja ditinggal hidup (PID/token file tetap ada →
+        // launch berikutnya attach ke sana).
+        if plan.stopsOwnedGateway { stopOwnedGatewayIfNeeded() }
     }
 
     /// Tutup client/session run sebelumnya (bukan gateway-nya).

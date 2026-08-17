@@ -41,14 +41,12 @@ public struct ControlPanelModel: Equatable, Sendable {
     /// Ada turn yang sedang berjalan → form task baru dikunci.
     /// success/error/disconnected TIDAK busy: ManagedSession.run() me-reset
     /// state machine tiap run, jadi task berikutnya boleh langsung dimulai.
-    public var isBusy: Bool {
-        switch state {
-        case .starting, .working, .needsYou, .stopping:
-            return true
-        case .idle, .success, .error, .disconnected:
-            return false
-        }
-    }
+    public var isBusy: Bool { state.isActiveTurn }
+
+    /// Boleh menekan Stop (PRD 55)? Diturunkan dari state machine, bukan daftar
+    /// state terpisah: kalau `stopping` tidak legal dari sini, `session.interrupt`
+    /// pasti ditolak dan tombolnya cuma bohong.
+    public var canStop: Bool { TaskStateMachine.isLegal(from: state, to: .stopping) }
 
     /// Boleh menekan Start? Folder divalidasi lewat closure yang di-inject
     /// (pola HermesDetector.resolveBinary(in:exists:)) supaya tetap murni.
